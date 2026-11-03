@@ -1,9 +1,9 @@
 
 import json
 from hello_agents import SimpleAgent
-from hello_agents.tools import MCPTool
 
 from ..models.schedmas import TripRequest,TripPlan, DayPlan, Attraction, Meal, WeatherInfo, Location, Hotel
+from ..services.amap_mcp import create_amap_mcp_tool
 from ..services.llm_service import get_llm
 from ..config import get_settings
 
@@ -158,14 +158,10 @@ class TripPlannerAgent:
             self.llm = get_llm()
             # 创建共享的MCP工具(只创建一次)
             print("  - 创建共享MCP工具...")
-            self.amap_tool = MCPTool(
-                name="amap",
+            self.amap_tool = create_amap_mcp_tool(
+                settings.amap_api_key,
                 description="高德地图服务",
-                server_command=["uvx", "amap-mcp-server"],
-                env={"AMAP_MAPS_API_KEY": settings.amap_api_key},
-                auto_expand=True
             )
-            self.amap_tool.expandable = True
 
             self.attraction_agent = SimpleAgent(name="景点搜索",llm=self.llm,system_prompt=ATTRACTION_AGENT_PROMPT)
             self.attraction_agent.add_tool(self.amap_tool)

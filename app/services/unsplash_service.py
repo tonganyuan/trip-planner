@@ -25,6 +25,7 @@ class UnsplashService:
             response = requests.get(url,params = params ,timeout= 20)
             response.raise_for_status()
             data = response.json()
+            print(f"获取图片信息:{data}")
             results = data.get("results",[])
 
             photos = []
@@ -36,6 +37,7 @@ class UnsplashService:
                     "description": photo.get("description") or photo.get("alt_description"),
                     "photographer": photo.get("user", {}).get("name")
                 })
+            return photos
         except Exception as e:
             logger.error(f"搜索图片失败:{e}")
             return []

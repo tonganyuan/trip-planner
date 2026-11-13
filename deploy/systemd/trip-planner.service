@@ -1,0 +1,40 @@
+[Unit]
+Description=Trip Planner API (FastAPI + uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__RUN_USER__
+Group=__RUN_USER__
+WorkingDirectory=__APP_DIR__
+
+# HOME 必须是可写目录：uvx 拉取 amap-mcp-server 时把缓存写到 ~/.cache/uv，
+# 而 mcp 客户端只把 HOME/PATH 等白名单变量传给子进程，env 传不进去。
+Environment=HOME=__RUN_HOME__
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=-__APP_DIR__/.env
+
+# 单 worker 是有意为之：LLM 实例、Unsplash 服务是进程内单例，
+# 每个 worker 还会各起一个高德 MCP 子进程，多开只会白烧内存。
+ExecStart=__VENV__/bin/uvicorn app.api.main:app \
+    --host 127.0.0.1 --port __PORT__ --workers 1 \
+    --proxy-headers --forwarded-allow-ips=127.0.0.1
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=40
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=__RUN_HOME__
+
+[Install]
+WantedBy=multi-user.target

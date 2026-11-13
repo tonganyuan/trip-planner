@@ -1,6 +1,6 @@
 """高德地图 MCP 工具的统一创建入口。
 
-这里集中处理 Windows 上最容易踩的两个坑：
+这里集中处理部署时最容易踩的两个坑（本地 Windows 与 Linux 服务器都会遇到）：
 
 1. **uvx 不在 PATH 里**
    `uvx` 由 `uv` 附带，安装在本项目的 `.venv/Scripts/uvx.exe`。
@@ -44,26 +44,35 @@ class AmapMcpError(RuntimeError):
 
 
 def find_uvx() -> str:
-    """定位 uvx 可执行文件：优先 PATH，其次当前解释器所在的虚拟环境。"""
+    """定位 uvx 可执行文件：优先 PATH，其次当前虚拟环境。
+
+    注意不能对 ``sys.executable`` 用 ``resolve()``：Linux 上
+    ``.venv/bin/python`` 是指向 ``/usr/bin/python3`` 的符号链接，
+    ``resolve()`` 会把它解析成系统解释器，于是去 ``/usr/bin`` 下找 uvx，
+    永远找不到。Windows 的 venv 是复制 exe，不会踩这个坑。
+    """
     found = shutil.which("uvx")
     if found:
         return found
 
     exe_name = "uvx.exe" if os.name == "nt" else "uvx"
-    python_dir = Path(sys.executable).resolve().parent
+    exe_dir = Path(sys.executable).parent
     candidates = [
-        python_dir / exe_name,
-        python_dir.parent / "Scripts" / exe_name,
+        exe_dir / exe_name,
+        Path(sys.prefix) / "bin" / exe_name,
+        Path(sys.prefix) / "Scripts" / exe_name,
     ]
     for candidate in candidates:
         if candidate.is_file():
             return str(candidate)
 
+    searched = "、".join(str(path) for path in candidates)
     raise AmapMcpError(
         "找不到 uvx 命令（uvx 随 uv 一起安装）。任选一种方式：\n"
-        "  1. 先激活虚拟环境再启动：.venv\\Scripts\\activate 然后 python run.py\n"
-        "  2. 把 uv 装进当前环境：.venv\\Scripts\\python.exe -m pip install uv\n"
-        "  3. 安装 uv 后重启终端，确认 `uvx --version` 有输出"
+        f"  1. 先激活虚拟环境再启动：{exe_dir / 'activate'} 然后 python run.py\n"
+        f"  2. 把 uv 装进当前环境：{sys.executable} -m pip install uv\n"
+        "  3. 安装 uv 后重启终端，确认 `uvx --version` 有输出\n"
+        f"（已查过：PATH、{searched}）"
     )
 
 

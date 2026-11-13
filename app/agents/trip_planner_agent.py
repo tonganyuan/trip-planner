@@ -1,5 +1,9 @@
 
 import json
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 from hello_agents import SimpleAgent
 
 from ..models.schedmas import TripRequest,TripPlan, DayPlan, Attraction, Meal, WeatherInfo, Location, Hotel
@@ -29,6 +33,7 @@ ATTRACTION_AGENT_PROMPT = """你是景点搜索专家。你的任务是根据城
 1. 必须使用工具,不要直接回答
 2. 格式必须完全正确,包括方括号和冒号
 3. 参数用逗号分隔
+4. 只调用一次工具；拿到结果后直接用一两句话总结，不要重复调用
 """
 
 WEATHER_AGENT_PROMPT = """你是天气查询专家。你的任务是查询指定城市的天气信息。
@@ -50,6 +55,7 @@ WEATHER_AGENT_PROMPT = """你是天气查询专家。你的任务是查询指定
 **注意:**
 1. 必须使用工具,不要直接回答
 2. 格式必须完全正确,包括方括号和冒号
+3. 只调用一次工具；拿到结果后直接用一两句话总结，不要重复调用
 """
 
 HOTEL_AGENT_PROMPT = """你是酒店推荐专家。你的任务是根据城市和景点位置推荐合适的酒店。
@@ -69,6 +75,7 @@ HOTEL_AGENT_PROMPT = """你是酒店推荐专家。你的任务是根据城市�
 1. 必须使用工具,不要直接回答
 2. 格式必须完全正确,包括方括号和冒号
 3. 关键词使用"酒店"或"宾馆"
+4. 只调用一次工具；拿到结果后直接用一两句话总结，不要重复调用
 """
 
 PLANNER_AGENT_PROMPT = """你是行程规划专家。你的任务是根据景点信息和天气信息,生成详细的旅行计划。
@@ -148,6 +155,8 @@ PLANNER_AGENT_PROMPT = """你是行程规划专家。你的任务是根据景点
    - 餐饮预估费用(estimated_cost)
    - 酒店预估费用(estimated_cost)
    - 预算汇总(budget)包含各项总费用
+8. **输出要精简**：每个景点的 description 控制在 40 字以内，
+   overall_suggestions 不超过 200 字。生成速度与输出长度成正比
 """
 
 class TripPlannerAgent:
@@ -176,27 +185,72 @@ class TripPlannerAgent:
             traceback.print_exc()
             raise
 
+    def _reset_history(self) -> None:
+        """清空各子 Agent 的历史。
+
+        这些 Agent 是进程级单例，SimpleAgent 每跑一次都会把「用户输入 + 回复」
+        追加到自己的 _history 里，而 _history 会整段拼进下一条 system/user 消息。
+        不清空的话第 N 次请求要把前面 N-1 轮全部重新发一遍，
+        提示词越滚越大，响应时间会从几十秒一路涨到几分钟。
+        """
+        for agent in (
+            self.attraction_agent,
+            self.weather_agent,
+            self.hotel_agent,
+            self.planner_agent,
+        ):
+            agent.clear_history()
+
+    @staticmethod
+    def _run_agent(agent, query: str, label: str) -> str:
+        """跑一个子 Agent，记录耗时；单个失败不影响整体规划。"""
+        started = time.perf_counter()
+        try:
+            return agent.run(query)
+        except Exception as exc:
+            print(f"⚠️  {label}失败: {type(exc).__name__}: {exc}")
+            return f"（{label}失败，未获取到信息）"
+        finally:
+            print(f"⏱  {label}耗时 {time.perf_counter() - started:.1f}s")
+
     def plan_trip(self, request: TripRequest) -> TripPlan:
-        # 步骤1: 景点搜索
+        total_started = time.perf_counter()
+        self._reset_history()
+
         preferences = "、".join(request.preferences) if request.preferences else "热门"
-        attraction_response = self.attraction_agent.run(
-            f"请搜索{request.city}的{preferences}景点"
-        )
-        # 步骤2: 天⽓查询
-        weather_response = self.weather_agent.run(
-            f"请查询{request.city}的天⽓"
-        )
-        # 步骤3: 酒店推荐
-        hotel_response = self.hotel_agent.run(
-            f"请搜索{request.city}的{request.accommodation}酒店"
-        )
-        # 步骤4: 整合⽣成计划
+
+        # 步骤1-3: 景点 / 天气 / 酒店互不依赖，并行执行。
+        # 串行时三段耗时相加，并行后只取最慢的一段（通常能省掉 1/2~2/3）
+        gather_started = time.perf_counter()
+        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="subagent") as pool:
+            attraction_future = pool.submit(
+                self._run_agent, self.attraction_agent,
+                f"请搜索{request.city}的{preferences}景点", "景点搜索",
+            )
+            weather_future = pool.submit(
+                self._run_agent, self.weather_agent,
+                f"请查询{request.city}的天气", "天气查询",
+            )
+            hotel_future = pool.submit(
+                self._run_agent, self.hotel_agent,
+                f"请搜索{request.city}的{request.accommodation}酒店", "酒店推荐",
+            )
+            attraction_response = attraction_future.result()
+            weather_response = weather_future.result()
+            hotel_response = hotel_future.result()
+        print(f"⏱  信息收集阶段耗时 {time.perf_counter() - gather_started:.1f}s（3 个子任务并行）")
+
+        # 步骤4: 整合生成计划（依赖前三步结果，只能串行）
+        planner_started = time.perf_counter()
         planner_query = self._build_planner_query(
             request, attraction_response, weather_response, hotel_response
         )
         planner_response = self.planner_agent.run(planner_query)
+        print(f"⏱  行程规划耗时 {time.perf_counter() - planner_started:.1f}s")
+
         # 步骤5: 解析JSON
         trip_plan = self._parse_response(planner_response, request)
+        print(f"⏱  规划总耗时 {time.perf_counter() - total_started:.1f}s")
         return trip_plan
 
     def _build_planner_query(
@@ -318,11 +372,18 @@ class TripPlannerAgent:
 # ============ 单例 ============
 
 _trip_planner_agent = None
+_agent_lock = threading.Lock()
 
 
 def get_trip_planner_agent() -> TripPlannerAgent:
-    """获取旅行规划Agent单例(首次调用时初始化)"""
+    """获取旅行规划Agent单例(首次调用时初始化)。
+
+    初始化要连一次高德 MCP（首次还会现下 amap-mcp-server，几十秒），
+    加锁防止启动预热线程和第一个用户请求同时初始化两套 Agent。
+    """
     global _trip_planner_agent
     if _trip_planner_agent is None:
-        _trip_planner_agent = TripPlannerAgent()
+        with _agent_lock:
+            if _trip_planner_agent is None:
+                _trip_planner_agent = TripPlannerAgent()
     return _trip_planner_agent

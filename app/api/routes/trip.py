@@ -1,6 +1,9 @@
 """旅行规划API路由"""
 
+import time
+
 from fastapi import APIRouter, HTTPException
+from starlette.concurrency import run_in_threadpool
 from ...models.schedmas import (
     TripRequest,
     TripPlanResponse,
@@ -41,9 +44,12 @@ async def plan_trip(request: TripRequest):
 
         # 生成旅行计划
         print("🚀 开始生成旅行计划...")
-        trip_plan = agent.plan_trip(request)
+        started = time.perf_counter()
+        # plan_trip 是纯同步的重活（LLM + MCP，几十秒起步），
+        # 直接 await 会占住事件循环，导致同一进程里其它请求（健康检查、图片）全排队
+        trip_plan = await run_in_threadpool(agent.plan_trip, request)
 
-        print("✅ 旅行计划生成成功,准备返回响应\n")
+        print(f"✅ 旅行计划生成成功，总耗时 {time.perf_counter() - started:.1f}s，准备返回响应\n")
 
         return TripPlanResponse(
             success=True,
@@ -69,14 +75,14 @@ async def plan_trip(request: TripRequest):
 async def health_check():
     """健康检查"""
     try:
-        # 检查Agent是否可用
+        # 检查Agent是否可用（注意 TripPlannerAgent 没有 .agent 属性，
+        # 之前这里会 AttributeError，健康检查永远是 503）
         agent = get_trip_planner_agent()
-        
+
         return {
             "status": "healthy",
             "service": "trip-planner",
-            "agent_name": agent.agent.name,
-            "tools_count": len(agent.agent.list_tools())
+            "agent_name": agent.attraction_agent.name,
         }
     except Exception as e:
         raise HTTPException(

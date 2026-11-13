@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 from typing import List, Optional
 from ...services.amap_service import get_amap_service
 from ...services.unsplash_service import get_unsplash_service
@@ -34,9 +35,10 @@ async def get_poi_detail(poi_id: str):
     """
     try:
         amap_service = get_amap_service()
-        
-        # 调用高德地图POI详情API
-        result = amap_service.get_poi_detail(poi_id)
+
+        # MCP 调用是同步阻塞的（还要现起 uvx 进程），丢到线程池里跑，
+        # 否则会卡住事件循环，其它请求全部排队
+        result = await run_in_threadpool(amap_service.get_poi_detail, poi_id)
         
         return POIDetailResponse(
             success=True,
@@ -70,7 +72,7 @@ async def search_poi(keywords: str, city: str = "北京"):
     """
     try:
         amap_service = get_amap_service()
-        result = amap_service.search_poi(keywords, city)
+        result = await run_in_threadpool(amap_service.search_poi, keywords, city)
 
         return {
             "success": True,
@@ -104,12 +106,9 @@ async def get_attraction_photo(name: str):
     try:
         unsplash_service = get_unsplash_service()
 
-        # 搜索景点图片
-        photo_url = unsplash_service.get_photo_url(f"{name} China landmark")
-
-        if not photo_url:
-            # 如果没找到,尝试只用景点名称搜索
-            photo_url = unsplash_service.get_photo_url(name)
+        # 异步请求 + 6 秒超时 + TTL 缓存：打不通就直接返回 None，
+        # 不再像之前那样用同步 requests 把事件循环卡 20 秒
+        photo_url = await unsplash_service.get_photo_url(f"{name} China landmark")
 
         return {
             "success": True,

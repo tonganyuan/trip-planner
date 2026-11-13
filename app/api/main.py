@@ -1,5 +1,6 @@
 """FastAPI主应用"""
 
+import threading
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,6 +37,23 @@ app.include_router(poi.router, prefix="/api")
 app.include_router(map_routes.router, prefix="/api")
 
 
+def _warm_up_agents() -> None:
+    """后台预热 Agent 与高德 MCP。
+
+    第一次生成行程时，初始化要连一次 MCP（首次还会现下 amap-mcp-server，
+    几十秒到一两分钟），这段时间全算在第一个用户的等待里。
+    放到后台线程提前做掉，用户点“生成”时就已经是热态。
+    """
+    try:
+        from app.agents.trip_planner_agent import get_trip_planner_agent
+
+        get_trip_planner_agent()
+        print("✅ 预热完成：多智能体与高德 MCP 已就绪")
+    except Exception as exc:
+        # 预热失败不影响服务启动，第一次真实请求会再试一次
+        print(f"⚠️  预热失败（不影响启动，首个请求会重试）: {type(exc).__name__}: {exc}")
+
+
 @app.on_event("startup")
 async def startup_event():
     """应用启动事件"""
@@ -59,6 +77,9 @@ async def startup_event():
     print("📚 API文档: http://localhost:8000/docs")
     print("📖 ReDoc文档: http://localhost:8000/redoc")
     print("="*60 + "\n")
+
+    # 后台预热，不阻塞启动
+    threading.Thread(target=_warm_up_agents, name="warmup", daemon=True).start()
 
 
 @app.on_event("shutdown")

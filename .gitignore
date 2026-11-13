@@ -49,3 +49,5 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# 部署产物
+deploy/out/

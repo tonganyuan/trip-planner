@@ -19,9 +19,12 @@ app = FastAPI(
 )
 
 # 配置CORS
+# allow_origins 为显式白名单(见 .env 的 CORS_ORIGINS)；
+# allow_origin_regex 兜底放行本机任意端口，避免前端换端口(80/5173/3000...)后再次跨域失败
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.get_cors_origins_list(),
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?|https?://[\w.-]+\.vicp\.fun(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

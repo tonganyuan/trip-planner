@@ -1,5 +1,27 @@
 // 类型定义
 
+export interface UserInfo {
+  id: number
+  username: string
+  display_name: string
+  created_at?: string
+  last_login_at?: string | null
+}
+
+export interface AuthResponse {
+  success: boolean
+  message: string
+  token?: string | null
+  expires_at?: string | null
+  user?: UserInfo | null
+}
+
+export interface AuthStatus {
+  success: boolean
+  allow_register: boolean
+  has_users: number
+}
+
 export interface Location {
   longitude: number
   latitude: number

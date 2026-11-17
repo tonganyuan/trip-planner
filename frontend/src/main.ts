@@ -1,26 +1,18 @@
 import { createApp } from 'vue'
-import { createRouter, createWebHistory } from 'vue-router'
 import Antd from 'ant-design-vue'
 import 'ant-design-vue/dist/reset.css'
 import './styles/global.css'
 import App from './App.vue'
-import Home from './views/Home.vue'
-import Result from './views/Result.vue'
+import router from './router'
+import { setUnauthorizedHandler } from './services/http'
+import { resetAuthState } from './composables/useAuth'
 
-const router = createRouter({
-  history: createWebHistory(),
-  routes: [
-    {
-      path: '/',
-      name: 'Home',
-      component: Home
-    },
-    {
-      path: '/result',
-      name: 'Result',
-      component: Result
-    }
-  ]
+// 任何接口返回 401 时，统一清登录态并送去登录页（带回来时要去的地址）。
+// 放在这里注册而不是写进 http.ts，是为了让 http 层不依赖 router。
+setUnauthorizedHandler((redirect) => {
+  resetAuthState()
+  if (router.currentRoute.value.name === 'Login') return
+  router.replace({ name: 'Login', query: redirect ? { redirect } : {} })
 })
 
 const app = createApp(App)
@@ -29,4 +21,3 @@ app.use(router)
 app.use(Antd)
 
 app.mount('#app')
-

@@ -5,7 +5,8 @@ import threading
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings, validate_config, print_config
-from app.api.routes import trip, poi, map as map_routes
+from app.api.routes import auth, trip, poi, map as map_routes
+from app.services.db import init_db
 
 # 获取配置
 settings = get_settings()
@@ -32,6 +33,7 @@ app.add_middleware(
 )
 
 # 注册路由
+app.include_router(auth.router, prefix="/api")
 app.include_router(trip.router, prefix="/api")
 app.include_router(poi.router, prefix="/api")
 app.include_router(map_routes.router, prefix="/api")
@@ -72,7 +74,15 @@ async def startup_event():
         print(f"\n❌ 配置验证失败:\n{e}")
         print("\n请检查.env文件并确保所有必要的配置项都已设置")
         raise
-    
+
+    # 初始化数据库(建表，幂等)
+    try:
+        init_db()
+        print(f"✅ 数据库就绪: {settings.db_path}")
+    except Exception as e:
+        print(f"❌ 数据库初始化失败: {type(e).__name__}: {e}")
+        raise
+
     print("\n" + "="*60)
     print("📚 API文档: http://localhost:8000/docs")
     print("📖 ReDoc文档: http://localhost:8000/redoc")

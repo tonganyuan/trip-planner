@@ -193,6 +193,52 @@ class WeatherResponse(BaseModel):
     data: List[WeatherInfo] = Field(default=[], description="天气信息")
 
 
+# ============ 用户认证 ============
+
+class UserRegister(BaseModel):
+    """注册请求"""
+    username: str = Field(..., min_length=3, max_length=64, description="用户名或邮箱", example="pangzi")
+    password: str = Field(..., min_length=6, max_length=64, description="密码，至少6位", example="trip2025")
+    display_name: Optional[str] = Field(default="", max_length=32, description="显示名称", example="胖子")
+
+    @field_validator("username")
+    @classmethod
+    def strip_username(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("用户名不能为空")
+        return v
+
+    class Config:
+        json_schema_extra = {
+            "example": {"username": "pangzi", "password": "trip2025", "display_name": "胖子"}
+        }
+
+
+class UserLogin(BaseModel):
+    """登录请求"""
+    username: str = Field(..., description="用户名或邮箱", example="pangzi")
+    password: str = Field(..., description="密码", example="trip2025")
+
+
+class UserInfo(BaseModel):
+    """用户信息(不含密码)"""
+    id: int = Field(..., description="用户ID")
+    username: str = Field(..., description="用户名")
+    display_name: str = Field(default="", description="显示名称")
+    created_at: str = Field(default="", description="注册时间")
+    last_login_at: Optional[str] = Field(default=None, description="最近登录时间")
+
+
+class AuthResponse(BaseModel):
+    """认证响应：登录/注册成功时带 token"""
+    success: bool = Field(default=True, description="是否成功")
+    message: str = Field(default="", description="消息")
+    token: Optional[str] = Field(default=None, description="访问令牌")
+    expires_at: Optional[str] = Field(default=None, description="令牌过期时间")
+    user: Optional[UserInfo] = Field(default=None, description="用户信息")
+
+
 # ============ 错误响应 ============
 
 class ErrorResponse(BaseModel):

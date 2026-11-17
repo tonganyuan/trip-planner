@@ -51,3 +51,9 @@ Thumbs.db
 
 # 部署产物
 deploy/out/
+
+# 本地数据(SQLite 库、JWT 密钥)
+data/
+
+# 临时文件
+.tmp/

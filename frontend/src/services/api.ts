@@ -1,41 +1,5 @@
-import axios from 'axios'
 import type { TripFormData, TripPlanResponse } from '@/types'
-
-// 默认走同源相对路径(生产环境由 nginx 反代 /api 到后端)，
-// 需要直连后端时在 .env 里显式设置 VITE_API_BASE_URL，例如 http://localhost:8000
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
-
-const apiClient = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 120000, // 2分钟超时
-  headers: {
-    'Content-Type': 'application/json'
-  }
-})
-
-// 请求拦截器
-apiClient.interceptors.request.use(
-  (config) => {
-    console.log('发送请求:', config.method?.toUpperCase(), config.url)
-    return config
-  },
-  (error) => {
-    console.error('请求错误:', error)
-    return Promise.reject(error)
-  }
-)
-
-// 响应拦截器
-apiClient.interceptors.response.use(
-  (response) => {
-    console.log('收到响应:', response.status, response.config.url)
-    return response
-  },
-  (error) => {
-    console.error('响应错误:', error.response?.status, error.message)
-    return Promise.reject(error)
-  }
-)
+import apiClient from './http'
 
 /**
  * 生成旅行计划
@@ -64,4 +28,3 @@ export async function healthCheck(): Promise<any> {
 }
 
 export default apiClient
-

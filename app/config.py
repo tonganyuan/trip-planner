@@ -47,6 +47,17 @@ class Settings(BaseSettings):
     # 日志配置
     log_level: str = "INFO"
 
+    # ============ 用户认证 ============
+    # SQLite 数据库位置，相对路径按项目根目录解析
+    db_path: str = "data/app.db"
+    # JWT 签名密钥。留空时自动生成并落盘到 data/.auth_secret，
+    # 保证重启后已签发的 token 依然有效；线上建议用环境变量显式配置
+    auth_secret: str = ""
+    # token 有效期(分钟)，默认 7 天
+    auth_token_expire_minutes: int = 60 * 24 * 7
+    # 是否开放注册。关掉之后就只剩已有账号能登录(适合单人使用)
+    allow_register: bool = True
+
     class Config:
         env_file = "../.env"
         case_sensitive = False
@@ -109,4 +120,7 @@ def print_config():
     print(f"LLM Base URL: {llm_base_url}")
     print(f"LLM Model: {llm_model}")
     print(f"日志级别: {settings.log_level}")
+    print(f"数据库: {settings.db_path}")
+    print(f"开放注册: {'是' if settings.allow_register else '否(仅已有账号可登录)'}")
+    print(f"JWT 密钥: {'环境变量' if settings.auth_secret else '未配置，将使用 data/.auth_secret'}")
 

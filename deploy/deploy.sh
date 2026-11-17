@@ -264,6 +264,20 @@ if [[ ! -f "${ENV_FILE}" ]]; then
 fi
 chown root:"${RUN_USER}" "${ENV_FILE}"
 chmod 640 "${ENV_FILE}"
+
+# 用户数据目录：账号库和 JWT 密钥。属主必须是运行用户，
+# 而 ${APP_DIR} 每次部署都会被 chown 成 root，所以不能放在代码目录里。
+install -d -m 750 -o "${RUN_USER}" -g "${RUN_USER}" "${RUN_HOME}/data"
+# 老服务器升级上来时 .env 已存在、里面没有 DB_PATH，代码会退回到相对路径 data/app.db
+# 从而撞上权限问题。这里按需自动补写，避免升级后服务起不来。
+if ! grep -q '^DB_PATH=' "${ENV_FILE}"; then
+  printf '\n# 用户认证(升级时由 deploy.sh 自动补全)\nDB_PATH=%s/data/app.db\nALLOW_REGISTER=true\n' \
+    "${RUN_HOME}" >> "${ENV_FILE}"
+  chown root:"${RUN_USER}" "${ENV_FILE}"
+  chmod 640 "${ENV_FILE}"
+  log "已向 .env 补写 DB_PATH=${RUN_HOME}/data/app.db"
+fi
+
 if [[ "${DOMAIN}" != "_" ]] && ! grep -q "${DOMAIN}" "${ENV_FILE}"; then
   warn "CORS_ORIGINS 里没有 ${DOMAIN}，同源部署不影响，但建议补上以防直连 8000"
 fi

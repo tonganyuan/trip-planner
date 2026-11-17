@@ -208,10 +208,12 @@ import { ref, reactive, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { generateTripPlan } from '@/services/api'
+import { useAuth } from '@/composables/useAuth'
 import type { TripFormData } from '@/types'
 import type { Dayjs } from 'dayjs'
 
 const router = useRouter()
+const { isLoggedIn } = useAuth()
 const loading = ref(false)
 const loadingProgress = ref(0)
 const loadingStatus = ref('')
@@ -249,6 +251,14 @@ watch([() => formData.start_date, () => formData.end_date], ([start, end]) => {
 })
 
 const handleSubmit = async () => {
+  // 生成行程要落库并计入个人记录，先确保是登录态；
+  // 登录页会带回 redirect，登录完自动回到首页继续填
+  if (!isLoggedIn.value) {
+    message.info('登录后才能生成并保存行程')
+    router.push({ name: 'Login', query: { redirect: '/' } })
+    return
+  }
+
   if (!formData.start_date || !formData.end_date) {
     message.error('请选择日期')
     return

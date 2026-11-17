@@ -15,7 +15,8 @@
   # 产物：...\deploy\out\trip-dist.tar.gz
 #>
 param(
-    [string]$FrontendDir = "D:\learnspace\hello-agents\code\chapter13\helloagents-trip-planner\frontend",
+    # 前端已并入本仓库：deploy 的上一级就是项目根，frontend 在其下
+    [string]$FrontendDir = (Join-Path (Split-Path -Parent $PSScriptRoot) "frontend"),
     [string]$OutFile = (Join-Path $PSScriptRoot "out\trip-dist.tar.gz")
 )
 

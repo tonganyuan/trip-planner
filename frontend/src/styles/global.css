@@ -1,0 +1,71 @@
+/* ===== 全局基础样式(移动端适配) ===== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* iOS 横竖屏切换时不要自动放大文字 */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  width: 100%;
+  /* 兜底:任何一处溢出都不要让整页左右晃动 */
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 图片、SVG 永远不要撑破容器 */
+img,
+svg {
+  max-width: 100%;
+}
+
+/* 触屏设备上没有 hover,关闭依赖 hover 的位移/缩放,避免点击后"黏住" */
+@media (hover: none) {
+  .ant-card:hover,
+  .ant-list-item:hover,
+  .ant-collapse-item:hover,
+  .ant-collapse-header:hover {
+    transform: none !important;
+  }
+}
+
+/* 窄屏下 antd 全局组件的细节修正 */
+@media (max-width: 575px) {
+  /* 全局提示不要超出屏幕 */
+  .ant-message-notice-content {
+    max-width: calc(100vw - 24px);
+  }
+
+  /* 回到顶部按钮让出底部安全区(iPhone 全面屏) */
+  .ant-back-top {
+    right: 16px !important;
+    bottom: calc(20px + env(safe-area-inset-bottom)) !important;
+  }
+
+  /* 下拉面板不要顶出左右边界 */
+  .ant-select-dropdown,
+  .ant-picker-dropdown .ant-picker-panel-container {
+    max-width: calc(100vw - 16px);
+  }
+}
+
+@media (max-width: 767px) {
+  /* 顶部提示条避开固定头部,不要盖住标题 */
+  .ant-message {
+    top: 64px !important;
+  }
+}

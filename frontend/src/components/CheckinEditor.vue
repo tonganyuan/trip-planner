@@ -68,7 +68,7 @@
     <a-button type="dashed" block size="small" @click="add">＋ 添加打卡景点</a-button>
     <p class="editor-hint">
       景点名敲两个字会从高德搜地点，选中后自动记下经纬度——点城市时才能把几个景点连成轨迹。
-      照片会先在本地压到长边 {{ MAX_EDGE }}px 再传进你家的对象存储，单张原图不超过 {{ MAX_MB }}MB、每条最多 {{ MAX_IMAGES }} 张。
+      照片原图多大都行，会先在本地压到长边 {{ MAX_EDGE }}px（通常几百 KB）再传进你家的对象存储，每条最多 {{ MAX_IMAGES }} 张。
     </p>
   </div>
 </template>
@@ -240,14 +240,22 @@ async function onPick(event: Event, row: CheckinDraft): Promise<void> {
         message.warning(`${file.name} 不是图片，已跳过`)
         continue
       }
-      if (file.size > MAX_BYTES) {
-        message.warning(`${file.name} 超过 ${MAX_MB}MB，请先压缩，已跳过`)
+      // iPhone 直出/微信原图常是 HEIC，浏览器解不了码就压不了，
+      // 与其让它传到一半被后端拒掉，不如这里说清楚怎么办
+      if (/^image\/hei[cf]$/i.test(file.type)) {
+        message.warning(`${file.name} 是 HEIC 格式，浏览器读不了，请转成 JPG 再传`)
         continue
       }
       try {
         // 先压再传：手机直出 8MB 的照片压完只剩几百 KB，
-        // 既快又不会被反向代理的请求体上限拦成 413
+        // 既快又不会被反向代理的请求体上限拦成 413。
+        // 注意大小判断要放在压缩之后——微信原图动辄 5~10MB，
+        // 压缩前就拦掉等于把最常见的照片直接拒了。
         const prepared = await compressImage(file)
+        if (prepared.size > MAX_BYTES) {
+          message.warning(`${file.name} 压缩后仍有 ${Math.round(prepared.size / 1024 / 1024)}MB，超过 ${MAX_MB}MB，已跳过`)
+          continue
+        }
         const result = await uploadCheckinImage(prepared)
         // 预览用带签名的地址（桶是私有的），入库时后端会把签名参数剥掉
         row.urls.push(result.preview_url || result.url)

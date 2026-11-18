@@ -182,3 +182,5 @@ sudo bash $DEPLOY --dist /root/trip-dist.tar.gz
 ## 八、备案提醒
 
 大陆机器 + 域名走 80/443 必须 ICP 备案，否则会被运营商拦截。不备案的选择：用 IP + 非标端口访问、或者部署到香港/新加坡节点。这一步不在脚本范围内，买机器前先决定。
+tar -xzf /root/trip-dist.tar.gz -C /var/www/trip-planner
+systemctl restart trip-planner

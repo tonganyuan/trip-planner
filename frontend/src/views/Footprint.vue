@@ -1039,6 +1039,8 @@ const editMembers = ref<number[]>([])
 const editCheckins = ref<CheckinDraft[]>([])
 
 function openEdit(item: FootprintItem): void {
+  // 编辑弹窗和城市详情弹窗是同级，后开的那个不一定压得住，先收起城市详情
+  cityOpen.value = false
   editItem.value = item
   editStart.value = item.start_date
   editEnd.value = item.end_date

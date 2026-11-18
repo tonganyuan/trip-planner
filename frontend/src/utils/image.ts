@@ -17,12 +17,19 @@ const SKIP_BYTES = 400 * 1024
 /** GIF 可能是动图，压成 JPEG 就只剩第一帧；SVG 是矢量，都不用碰 */
 const PASS_TYPES = new Set(['image/gif', 'image/svg+xml'])
 
-function loadBitmap(file: File): Promise<{ width: number; height: number; draw: (ctx: CanvasRenderingContext2D) => void }> {
+type Source = {
+  width: number
+  height: number
+  /** 必须按目标尺寸绘制：canvas 已缩放，按原始尺寸画只会留下左上角一块 */
+  draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void
+}
+
+function loadBitmap(file: File): Promise<Source> {
   if (typeof createImageBitmap === 'function') {
     return createImageBitmap(file, { imageOrientation: 'from-image' }).then((bitmap) => ({
       width: bitmap.width,
       height: bitmap.height,
-      draw: (ctx: CanvasRenderingContext2D) => ctx.drawImage(bitmap, 0, 0),
+      draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => ctx.drawImage(bitmap, 0, 0, w, h),
     }))
   }
   // Safari 14 及以下没有 createImageBitmap，退回 <img>
@@ -34,7 +41,7 @@ function loadBitmap(file: File): Promise<{ width: number; height: number; draw: 
       resolve({
         width: img.naturalWidth,
         height: img.naturalHeight,
-        draw: (ctx: CanvasRenderingContext2D) => ctx.drawImage(img, 0, 0),
+        draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => ctx.drawImage(img, 0, 0, w, h),
       })
     }
     img.onerror = () => {
@@ -69,11 +76,12 @@ export async function compressImage(file: File): Promise<File> {
     canvas.height = height
     const ctx = canvas.getContext('2d')
     if (!ctx) return file
+    ctx.imageSmoothingEnabled = true
     ctx.imageSmoothingQuality = 'high'
     // JPEG 没有透明通道，PNG 截图压成 JPEG 后透明处会变黑，先铺白底
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, width, height)
-    source.draw(ctx)
+    source.draw(ctx, width, height)
 
     const blob = await toBlob(canvas)
     // 压完反而更大（原图本来就窄且压缩率高）就保留原图

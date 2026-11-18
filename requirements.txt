@@ -30,3 +30,9 @@ huggingface_hub>=0.25.0
 
 # 用户认证(JWT签名，密码哈希用标准库 hashlib.scrypt，无需额外依赖)
 PyJWT>=2.8.0
+
+# 家庭 LLM Key 的落库加密(AES-GCM)。有预编译 wheel，Linux/Windows 都不需要编译
+cryptography>=42.0.0
+
+# 华为云 OBS SDK：打卡图片直接传进用户自己的桶，服务端不落盘
+esdk-obs-python>=3.26.0

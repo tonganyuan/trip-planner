@@ -35,6 +35,23 @@
       </a-space>
     </div>
 
+    <!-- 缓存/历史提示 -->
+    <a-alert
+      v-if="fromCache"
+      type="info"
+      show-icon
+      class="cache-alert"
+      :message="isHistoryView ? '正在查看家庭共享的历史行程' : '本次命中缓存，直接返回了已有方案（未消耗 AI 额度）'"
+      :description="cacheDescription"
+    >
+      <template #action>
+        <a-space>
+          <a-button v-if="tripId" size="small" type="link" @click="goHistory">查看家庭行程</a-button>
+          <a-button v-if="canForceRefresh" size="small" type="link" @click="forceRefresh">重新生成</a-button>
+        </a-space>
+      </template>
+    </a-alert>
+
     <div v-if="tripPlan" class="content-wrapper">
       <!-- 侧边导航 -->
       <div class="side-nav">
@@ -320,16 +337,41 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { DownOutlined } from '@ant-design/icons-vue'
 import AMapLoader from '@amap/amap-jsapi-loader'
 import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
-import type { TripPlan } from '@/types'
+import { fetchTripById, generateTripPlan } from '@/services/api'
+import type { TripFormData, TripPlan } from '@/types'
 
 const router = useRouter()
+const route = useRoute()
+
+interface TripMeta {
+  from_cache?: boolean
+  trip_id?: number | null
+  cached_at?: string | null
+  request?: TripFormData
+}
+
+const tripMeta = ref<TripMeta | null>(null)
+const fromCache = ref(false)
+const isHistoryView = ref(false)
+const tripId = ref<number | null>(null)
+const cachedAt = ref<string | null>(null)
+const canForceRefresh = ref(false)
+const forceRefreshing = ref(false)
+
+const cacheDescription = computed(() => {
+  if (!cachedAt.value) return '这份方案由家庭共享，任何成员都能查看和编辑。'
+  const d = new Date(cachedAt.value)
+  const when = Number.isNaN(d.getTime()) ? cachedAt.value : d.toLocaleString('zh-CN')
+  return `方案生成/更新时间：${when}。同一家庭、同一城市、同一日期范围的相同请求会直接复用这份方案。`
+})
+
 const tripPlan = ref<TripPlan | null>(null)
 const editMode = ref(false)
 const originalPlan = ref<TripPlan | null>(null)
@@ -340,19 +382,102 @@ const activeDays = ref<number[]>([0]) // 默认展开第一天
 let map: any = null
 
 onMounted(async () => {
+  // 优先处理 ?id=xxx：从数据库加载家庭共享的历史行程
+  const idParam = route.query.id
+  if (idParam) {
+    const id = Number(idParam)
+    if (Number.isFinite(id) && id > 0) {
+      try {
+        const res = await fetchTripById(id)
+        if (res.success && res.data) {
+          tripPlan.value = res.data
+          fromCache.value = true
+          isHistoryView.value = true
+          tripId.value = res.trip_id ?? id
+          cachedAt.value = res.cached_at ?? null
+          sessionStorage.setItem('tripPlan', JSON.stringify(res.data))
+          await afterPlanReady()
+          return
+        }
+      } catch (e: any) {
+        message.error(e?.message || '加载历史行程失败')
+        router.replace('/history')
+        return
+      }
+    }
+  }
+
+  // 普通流程：读 sessionStorage
+  try {
+    const metaRaw = sessionStorage.getItem('tripMeta')
+    if (metaRaw) {
+      const meta: TripMeta = JSON.parse(metaRaw)
+      tripMeta.value = meta
+      fromCache.value = !!meta.from_cache
+      tripId.value = meta.trip_id ?? null
+      cachedAt.value = meta.cached_at ?? null
+      canForceRefresh.value = !!meta.request
+    }
+  } catch {
+    // 元数据损坏不影响主流程
+  }
+
   const data = sessionStorage.getItem('tripPlan')
   if (data) {
     tripPlan.value = JSON.parse(data)
-    // 加载景点图片
-    await loadAttractionPhotos()
-    // 等待DOM渲染完成后初始化地图
-    await nextTick()
-    initMap()
+    await afterPlanReady()
   }
 })
 
+/** 方案就绪后的公共收尾：加载图片 + 初始化地图 */
+async function afterPlanReady(): Promise<void> {
+  await loadAttractionPhotos()
+  await nextTick()
+  initMap()
+}
+
 const goBack = () => {
   router.push('/')
+}
+
+function goHistory(): void {
+  router.push('/history')
+}
+
+/** 跳过缓存重新生成（用户改了偏好想换新方案时用） */
+async function forceRefresh(): Promise<void> {
+  const request = tripMeta.value?.request
+  if (!request) {
+    message.warning('无法获取原始请求参数，请返回规划页重新填写')
+    return
+  }
+  forceRefreshing.value = true
+  message.loading({ content: '正在重新生成行程...', key: 'forceRefresh', duration: 0 })
+  try {
+    const res = await generateTripPlan(request, true)
+    if (res.success && res.data) {
+      tripPlan.value = res.data
+      fromCache.value = false
+      isHistoryView.value = false
+      tripId.value = res.trip_id ?? null
+      cachedAt.value = res.cached_at ?? null
+      sessionStorage.setItem('tripPlan', JSON.stringify(res.data))
+      sessionStorage.setItem('tripMeta', JSON.stringify({
+        from_cache: false,
+        trip_id: res.trip_id ?? null,
+        cached_at: res.cached_at ?? null,
+        request
+      }))
+      await afterPlanReady()
+      message.success({ content: '已重新生成', key: 'forceRefresh' })
+    } else {
+      message.error({ content: res.message || '重新生成失败', key: 'forceRefresh' })
+    }
+  } catch (e: any) {
+    message.error({ content: e?.message || '重新生成失败', key: 'forceRefresh' })
+  } finally {
+    forceRefreshing.value = false
+  }
 }
 
 // 滚动到指定区域
@@ -970,6 +1095,12 @@ const drawRoutes = (AMap: any, attractions: any[]) => {
   min-height: 100vh;
   background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
   padding: 40px 20px;
+}
+
+.cache-alert {
+  max-width: 1200px;
+  margin: -10px auto 20px;
+  border-radius: 8px;
 }
 
 .page-header {

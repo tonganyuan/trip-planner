@@ -5,7 +5,7 @@ import threading
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings, validate_config, print_config
-from app.api.routes import auth, trip, poi, map as map_routes
+from app.api.routes import auth, trip, poi, family, llm_config, map as map_routes, footprint, oss
 from app.services.db import init_db
 
 # 获取配置
@@ -34,23 +34,30 @@ app.add_middleware(
 
 # 注册路由
 app.include_router(auth.router, prefix="/api")
+app.include_router(family.router, prefix="/api")
+app.include_router(llm_config.router, prefix="/api")
 app.include_router(trip.router, prefix="/api")
 app.include_router(poi.router, prefix="/api")
 app.include_router(map_routes.router, prefix="/api")
+app.include_router(footprint.router, prefix="/api")
+app.include_router(oss.router, prefix="/api")
 
 
-def _warm_up_agents() -> None:
-    """后台预热 Agent 与高德 MCP。
+def _warm_up_mcp() -> None:
+    """后台预热高德 MCP。
 
     第一次生成行程时，初始化要连一次 MCP（首次还会现下 amap-mcp-server，
     几十秒到一两分钟），这段时间全算在第一个用户的等待里。
     放到后台线程提前做掉，用户点“生成”时就已经是热态。
+
+    注意只预热 MCP：模型是每个家庭自己的，启动时还不知道用谁的 key，
+    也不可能替某个家庭预建。
     """
     try:
-        from app.agents.trip_planner_agent import get_trip_planner_agent
+        from app.agents.trip_planner_agent import get_amap_tool
 
-        get_trip_planner_agent()
-        print("✅ 预热完成：多智能体与高德 MCP 已就绪")
+        get_amap_tool()
+        print("✅ 预热完成：高德 MCP 已就绪（模型按家庭配置，用时装配）")
     except Exception as exc:
         # 预热失败不影响服务启动，第一次真实请求会再试一次
         print(f"⚠️  预热失败（不影响启动，首个请求会重试）: {type(exc).__name__}: {exc}")
@@ -89,7 +96,7 @@ async def startup_event():
     print("="*60 + "\n")
 
     # 后台预热，不阻塞启动
-    threading.Thread(target=_warm_up_agents, name="warmup", daemon=True).start()
+    threading.Thread(target=_warm_up_mcp, name="warmup", daemon=True).start()
 
 
 @app.on_event("shutdown")

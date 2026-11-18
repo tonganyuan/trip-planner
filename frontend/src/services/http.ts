@@ -7,10 +7,11 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 120000, // 2分钟超时
-  headers: {
-    'Content-Type': 'application/json'
-  }
+  timeout: 120000 // 2分钟超时
+  // 注意：这里不要写死 Content-Type: application/json。
+  // axios 1.x 的 transformRequest 看到 JSON 头就会把 FormData 序列化成 JSON，
+  // 上传图片时后端收到的 body 变成 {"file":{}}，直接 422 Field required。
+  // 普通对象 payload axios 会自动补 application/json，FormData 则交给浏览器带 boundary。
 })
 
 // 请求拦截器：自动带上登录令牌

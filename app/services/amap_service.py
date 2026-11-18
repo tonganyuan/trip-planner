@@ -1,15 +1,38 @@
-from typing import List, Optional, Dict, Any
+import json
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 from hello_agents.tools import MCPTool
 from ..config import get_settings
 from ..models.schedmas import POIInfo, WeatherInfo, Location
 from .amap_mcp import create_amap_mcp_tool
 
+# 天气结果缓存：高德 MCP 一次调用 5~8 秒，首页每次进来都等一遍太难受。
+# 单进程 + 单 worker，字典读写足够，不需要额外锁。
+_WEATHER_TTL_SECONDS = 600
+
+
+def _extract_json(payload: Any) -> Optional[dict]:
+    """MCP 工具返回的是 "工具 'x' 执行结果:\\n{...}" 这类字符串，截出 JSON 段再解析"""
+    if isinstance(payload, dict):
+        return payload
+    if not isinstance(payload, str):
+        return None
+    start = payload.find("{")
+    end = payload.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        return json.loads(payload[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+
 
 class AmapService:
 
     def __init__(self):
         self.mcp_tool = get_amap_mcp_tool()
+        self._weather_cache: Dict[str, Tuple[float, List[WeatherInfo]]] = {}
 
     def search_poi(self, keywords: str, city: str, citylimit: bool = True) -> List[POIInfo]:
         """
@@ -55,8 +78,12 @@ class AmapService:
             city: 城市名称
 
         Returns:
-            天气信息列表
+            天气信息列表(未来若干天)
         """
+        cached = self._weather_cache.get(city)
+        if cached and time.time() - cached[0] < _WEATHER_TTL_SECONDS:
+            return cached[1]
+
         try:
             # 调用MCP工具
             result = self.mcp_tool.run({
@@ -66,15 +93,34 @@ class AmapService:
                     "city": city
                 }
             })
-
-            print(f"天气查询结果: {result[:200]}...")
-
-            # TODO: 解析实际的天气数据
-            return []
-
         except Exception as e:
             print(f"❌ 天气查询失败: {str(e)}")
             return []
+
+        data = _extract_json(result)
+        if not data:
+            print(f"⚠️ 天气数据解析失败: {str(result)[:200]}")
+            return []
+
+        # 高德返回字段是 dayweather/daytemp 这种紧凑命名，翻译成前端用的下划线命名
+        items: List[WeatherInfo] = []
+        for forecast in data.get("forecasts") or []:
+            if not isinstance(forecast, dict):
+                continue
+            items.append(WeatherInfo(
+                date=str(forecast.get("date", "")),
+                day_weather=str(forecast.get("dayweather", "")),
+                night_weather=str(forecast.get("nightweather", "")),
+                day_temp=forecast.get("daytemp", 0),
+                night_temp=forecast.get("nighttemp", 0),
+                wind_direction=str(forecast.get("daywind", "")),
+                wind_power=str(forecast.get("daypower", "")),
+            ))
+
+        if items:
+            self._weather_cache[city] = (time.time(), items)
+            print(f"✅ 天气查询完成: {data.get('city', city)}，{len(items)} 天")
+        return items
 
     def plan_route(
             self,

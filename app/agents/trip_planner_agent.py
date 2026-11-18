@@ -2,13 +2,16 @@
 import json
 import threading
 import time
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 from hello_agents import SimpleAgent
+from hello_agents.tools import MCPTool
 
 from ..models.schedmas import TripRequest,TripPlan, DayPlan, Attraction, Meal, WeatherInfo, Location, Hotel
+from ..services import llm_config_service
 from ..services.amap_mcp import create_amap_mcp_tool
-from ..services.llm_service import get_llm
+from ..services.llm_service import build_llm
 from ..config import get_settings
 
 # ============ Agent提示词 ============
@@ -160,18 +163,21 @@ PLANNER_AGENT_PROMPT = """你是行程规划专家。你的任务是根据景点
 """
 
 class TripPlannerAgent:
-    def __init__(self):
-        print("🔄 开始初始化多智能体旅行规划系统...")
-        try:
-            settings = get_settings()
-            self.llm = get_llm()
-            # 创建共享的MCP工具(只创建一次)
-            print("  - 创建共享MCP工具...")
-            self.amap_tool = create_amap_mcp_tool(
-                settings.amap_api_key,
-                description="高德地图服务",
-            )
+    def __init__(self, llm, amap_tool: MCPTool, label: str = ""):
+        """用「某个家庭自己的 LLM」装配一套子 Agent。
 
+        MCP 工具则全进程共享（连一次 amap-mcp-server 要几十秒，按家庭重建没有意义），
+        所以从外面传进来，而不是在这里 create。
+        """
+        self.label = label or "未命名家庭"
+        self.llm = llm
+        self.amap_tool = amap_tool
+        # 同一份 agent 会被同一家庭的多个成员同时用到，而 SimpleAgent 的历史是实例状态，
+        # 并发跑会把历史搅在一起（上一个人的景点塞进下一个人的 prompt）。
+        # 与其按请求新建 agent，不如串行化：一次行程本来就要几十秒，排队更可控。
+        self._run_lock = threading.Lock()
+        try:
+            print(f"🔄 初始化多智能体旅行规划系统（{self.label}）...")
             self.attraction_agent = SimpleAgent(name="景点搜索",llm=self.llm,system_prompt=ATTRACTION_AGENT_PROMPT)
             self.attraction_agent.add_tool(self.amap_tool)
             self.weather_agent = SimpleAgent(name="天⽓查询",llm=self.llm,system_prompt=WEATHER_AGENT_PROMPT)
@@ -214,6 +220,11 @@ class TripPlannerAgent:
             print(f"⏱  {label}耗时 {time.perf_counter() - started:.1f}s")
 
     def plan_trip(self, request: TripRequest) -> TripPlan:
+        # 见 __init__ 里的说明：同一家庭的多个请求串行，避免子 Agent 历史互相污染
+        with self._run_lock:
+            return self._plan_trip(request)
+
+    def _plan_trip(self, request: TripRequest) -> TripPlan:
         total_started = time.perf_counter()
         self._reset_history()
 
@@ -369,21 +380,73 @@ class TripPlannerAgent:
         )
 
 
-# ============ 单例 ============
+# ============ 缓存 ============
+#
+# 高德 MCP 全进程一份：连一次要几十秒，且它跟"用哪个模型"无关
+_amap_tool: MCPTool | None = None
+_amap_tool_lock = threading.Lock()
 
-_trip_planner_agent = None
-_agent_lock = threading.Lock()
+# Agent 按 (family_id, 配置更新时间) 缓存：家庭换了模型会自动建新的，
+# 旧实例在这里被清掉，不会越积越多
+_agents: "OrderedDict[tuple[int, str], TripPlannerAgent]" = OrderedDict()
+_agents_lock = threading.Lock()
+_MAX_CACHED_AGENTS = 8
 
 
-def get_trip_planner_agent() -> TripPlannerAgent:
-    """获取旅行规划Agent单例(首次调用时初始化)。
+def get_amap_tool() -> MCPTool:
+    """高德 MCP 工具单例。
 
-    初始化要连一次高德 MCP（首次还会现下 amap-mcp-server，几十秒），
-    加锁防止启动预热线程和第一个用户请求同时初始化两套 Agent。
+    以前的注释是"只创建一次"，其实每个 TripPlannerAgent 都会 create 一遍；
+    现在 agent 按家庭建，如果工具也跟着建，等于每个家庭都拉起一个 uvx 子进程。
     """
-    global _trip_planner_agent
-    if _trip_planner_agent is None:
-        with _agent_lock:
-            if _trip_planner_agent is None:
-                _trip_planner_agent = TripPlannerAgent()
-    return _trip_planner_agent
+    global _amap_tool
+    if _amap_tool is None:
+        with _amap_tool_lock:
+            if _amap_tool is None:
+                print("  - 创建共享MCP工具...")
+                _amap_tool = create_amap_mcp_tool(
+                    get_settings().amap_api_key,
+                    description="高德地图服务",
+                )
+    return _amap_tool
+
+
+def get_trip_planner_agent(family_id: int) -> TripPlannerAgent:
+    """取该家庭专属的 Agent。
+
+    没有配置模型时抛 LlmNotConfigured —— 这里**不会**退回服务端自己的 key，
+    否则"不配也能用"会立刻变成新的白嫖入口。
+    """
+    config = llm_config_service.get_runtime_config(family_id)
+    cache_key = (family_id, config["updated_at"])
+
+    with _agents_lock:
+        cached = _agents.get(cache_key)
+        if cached is not None:
+            _agents.move_to_end(cache_key)
+            return cached
+
+    agent = TripPlannerAgent(
+        build_llm(config),
+        get_amap_tool(),
+        label=f"家庭 {family_id} · {config['model']}",
+    )
+
+    with _agents_lock:
+        existing = _agents.get(cache_key)
+        if existing is not None:
+            return existing
+        _agents[cache_key] = agent
+        # 同一家庭改过配置：旧配置的实例已无人引用，顺手回收
+        for key in [k for k in _agents if k[0] == family_id and k != cache_key]:
+            _agents.pop(key, None)
+        while len(_agents) > _MAX_CACHED_AGENTS:
+            _agents.popitem(last=False)
+    return agent
+
+
+def invalidate_family_agent(family_id: int) -> None:
+    """配置被改动后主动丢弃实例（不依赖 updated_at 比较时的兜底）"""
+    with _agents_lock:
+        for key in [k for k in _agents if k[0] == family_id]:
+            _agents.pop(key, None)

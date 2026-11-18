@@ -17,7 +17,12 @@
               </div>
               <template #overlay>
                 <a-menu @click="handleMenuClick">
-                  <a-menu-item key="home">新建行程</a-menu-item>
+                  <a-menu-item key="plan">新建行程</a-menu-item>
+                  <a-menu-item key="history">家庭行程</a-menu-item>
+                  <a-menu-item key="footprint">我的足迹</a-menu-item>
+                  <a-menu-item key="family">家庭成员</a-menu-item>
+                  <a-menu-item key="model">模型设置</a-menu-item>
+                  <a-menu-item key="oss">对象存储</a-menu-item>
                   <a-menu-divider />
                   <a-menu-item key="logout">退出登录</a-menu-item>
                 </a-menu>
@@ -64,8 +69,28 @@ function goLogin() {
 }
 
 async function handleMenuClick({ key }: { key: string | number }) {
-  if (key === 'home') {
-    router.push('/')
+  if (key === 'plan') {
+    router.push('/plan')
+    return
+  }
+  if (key === 'history') {
+    router.push('/history')
+    return
+  }
+  if (key === 'footprint') {
+    router.push('/footprint')
+    return
+  }
+  if (key === 'family') {
+    router.push('/family')
+    return
+  }
+  if (key === 'model') {
+    router.push('/settings/model')
+    return
+  }
+  if (key === 'oss') {
+    router.push('/settings/oss')
     return
   }
   if (key === 'logout') {

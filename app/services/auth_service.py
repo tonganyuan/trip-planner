@@ -86,27 +86,49 @@ def _row_to_user(row: sqlite3.Row) -> dict:
         "id": row["id"],
         "username": row["username"],
         "display_name": row["display_name"] or row["username"],
+        "family_id": row["family_id"] if "family_id" in row.keys() else 0,
         "created_at": row["created_at"],
         "last_login_at": row["last_login_at"],
     }
 
 
-def create_user(username: str, password: str, display_name: str = "") -> dict:
-    """创建用户，用户名重复抛 AuthError"""
+def create_user(
+    username: str,
+    password: str,
+    display_name: str = "",
+    family_id: Optional[int] = None,
+) -> dict:
+    """创建用户。family_id=None 表示自建一个新的单人家庭；传入则加入已有家庭。"""
     username = normalize_username(username)
     password_hash = hash_password(password)
     now = _now_iso()
     try:
         with db_conn() as conn:
+            if family_id is None:
+                family_name = f"{(display_name or username).strip()[:30]}的家庭"
+                cursor = conn.execute(
+                    "INSERT INTO families (name, owner_id, created_at) VALUES (?, 0, ?)",
+                    (family_name, now),
+                )
+                family_id = cursor.lastrowid
+            else:
+                if conn.execute("SELECT id FROM families WHERE id = ?", (family_id,)).fetchone() is None:
+                    raise AuthError("家庭不存在")
+
             cursor = conn.execute(
-                "INSERT INTO users (username, display_name, password_hash, created_at) "
-                "VALUES (?, ?, ?, ?)",
-                (username, (display_name or "").strip(), password_hash, now),
+                "INSERT INTO users (username, display_name, password_hash, family_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (username, (display_name or "").strip(), password_hash, family_id, now),
             )
             user_id = cursor.lastrowid
+            # 新家庭此时才有户主 id，回填
+            conn.execute(
+                "UPDATE families SET owner_id = ? WHERE id = ? AND owner_id = 0",
+                (user_id, family_id),
+            )
             row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     except sqlite3.IntegrityError:
-        raise AuthError("该用户名已被注册")
+        raise AuthError("该用户名已被注册") from None
     return _row_to_user(row)
 
 

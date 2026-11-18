@@ -8,6 +8,11 @@ import apiClient from './http'
 
 /** 统一从后端 detail 里取中文提示，取不到再用兜底文案 */
 function toError(error: any, fallback: string): Error {
+  // 413 是反向代理拦下来的（nginx 的 client_max_body_size），后端根本没收到请求，
+  // 所以没有 detail 可读，只能按状态码给出能操作的提示
+  if (error?.response?.status === 413) {
+    return new Error('图片太大了，被服务器拒收（413）。换张小一点的图，或在服务器上调大上传上限')
+  }
   const detail = error?.response?.data?.detail
   // FastAPI 422 的 detail 是数组，直接塞给 Error 会显示 [object Object]，等于没报
   if (Array.isArray(detail)) {

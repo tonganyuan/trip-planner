@@ -68,7 +68,7 @@
     <a-button type="dashed" block size="small" @click="add">＋ 添加打卡景点</a-button>
     <p class="editor-hint">
       景点名敲两个字会从高德搜地点，选中后自动记下经纬度——点城市时才能把几个景点连成轨迹。
-      照片直接传进你家的对象存储，单张不超过 {{ MAX_MB }}MB、每条最多 {{ MAX_IMAGES }} 张。
+      照片会先在本地压到长边 {{ MAX_EDGE }}px 再传进你家的对象存储，单张原图不超过 {{ MAX_MB }}MB、每条最多 {{ MAX_IMAGES }} 张。
     </p>
   </div>
 </template>
@@ -78,11 +78,13 @@ import { onBeforeUnmount } from 'vue'
 import { message } from 'ant-design-vue'
 import { uploadCheckinImage } from '@/services/oss'
 import { searchPoi } from '@/services/footprint'
+import { compressImage } from '@/utils/image'
 import type { CheckinDraft } from '@/types'
 
 const MAX_IMAGES = 9
 const MAX_MB = 5
 const MAX_BYTES = MAX_MB * 1024 * 1024
+const MAX_EDGE = 1600
 
 // 父组件持有数组，这里直接往同一个数组里增删：打卡只是表单里的临时结构，
 // 多绕一层 emit 反而要维护两份状态，容易漏同步。
@@ -243,7 +245,10 @@ async function onPick(event: Event, row: CheckinDraft): Promise<void> {
         continue
       }
       try {
-        const result = await uploadCheckinImage(file)
+        // 先压再传：手机直出 8MB 的照片压完只剩几百 KB，
+        // 既快又不会被反向代理的请求体上限拦成 413
+        const prepared = await compressImage(file)
+        const result = await uploadCheckinImage(prepared)
         // 预览用带签名的地址（桶是私有的），入库时后端会把签名参数剥掉
         row.urls.push(result.preview_url || result.url)
       } catch (error: any) {

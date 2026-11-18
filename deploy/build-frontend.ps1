@@ -4,7 +4,10 @@
   本地构建前端并打包 dist，供服务器端 deploy.sh --dist 使用。
 
 .DESCRIPTION
-  服务器上不装 Node，前端一律在本地构建。脚本会：
+  前端源码已并入本仓库（../frontend）。默认流程是服务器上直接构建：
+      sudo bash deploy.sh --repo https://.../trip-planner.git
+  只有服务器不打算装 Node 时，才用本脚本在本地构建再传产物（方案 B）。
+  脚本会：
     1. 校验 frontend/.env（VITE_API_BASE_URL 必须为空 = 同源）
     2. npm run build
     3. 检查产物里没有写死的 http://localhost:8000
@@ -71,7 +74,7 @@ if ($jsFiles.Count -eq 0) { throw "dist/assets 下没有 JS 文件，构建异�
 
 $bad = $jsFiles | Select-String -Pattern "localhost:8000" -SimpleMatch -ErrorAction SilentlyContinue
 if ($bad) {
-    throw "产物里仍有 http://localhost:8000，说明用了旧源码或没走 import.meta.env，先修 src/services/api.ts"
+    throw "产物里仍有 http://localhost:8000，说明用了旧源码或没走 import.meta.env，先修 src/services/http.ts"
 }
 
 $jsSize = ($jsFiles | Measure-Object -Property Length -Sum).Sum
@@ -98,4 +101,6 @@ Write-Host ("==> 已生成 {0} ({1:N0} 字节)" -f $OutFile, $size) -ForegroundC
 Write-Host ""
 Write-Host "下一步：" -ForegroundColor Cyan
 Write-Host "  scp `"$OutFile`" root@<服务器IP>:/root/trip-dist.tar.gz"
-Write-Host "  ssh root@<服务器IP> `"sudo bash /root/trip-planner-src/deploy/deploy.sh --dist /root/trip-dist.tar.gz`""
+Write-Host "  ssh root@<服务器IP> `"sudo bash /opt/trip-planner/deploy/deploy.sh --dist /root/trip-dist.tar.gz`""
+Write-Host ""
+Write-Host "提示：如果服务器能装 Node，直接用 deploy.sh --repo 构建更省事（不用每次上传）。" -ForegroundColor DarkGray

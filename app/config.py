@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # token 有效期(分钟)，默认 7 天
     auth_token_expire_minutes: int = 60 * 24 * 7
     # 是否开放注册。关掉之后就只剩已有账号能登录(适合单人使用)
-    allow_register: bool = True
+    allow_register: bool = False
 
     class Config:
         env_file = "../.env"

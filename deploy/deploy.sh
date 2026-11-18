@@ -3,22 +3,27 @@
 # trip-planner 一键部署脚本
 # 目标系统：Ubuntu 22.04 / 24.04、Debian 12（apt）
 #
+# 仓库结构（前后端在同一个仓库里）：
+#   app/         FastAPI 后端
+#   frontend/    Vue 3 + Vite 前端
+#   deploy/      本目录
+#
 # 用法：
 #   sudo bash deploy.sh [选项]
 #
 # 典型场景：
-#   1) 首次部署：前后端都从 git 拉取，服务器上构建前端（推荐）
+#   1) 首次部署：--repo 拉整个仓库，服务器上一起构建前端（推荐）
 #        sudo bash deploy.sh --repo https://github.com/you/trip-planner.git \
-#             --frontend-repo https://github.com/you/hello-agents.git \
-#             --frontend-subdir code/chapter13/helloagents-trip-planner/frontend \
 #             --domain trip.example.com --email you@example.com --tls --swap 2G
-#   2) 前端在本地构建、上传产物（服务器不装 Node）：
+#   2) 前端在本地构建、只上传产物（服务器不装 Node）：
 #        sudo bash deploy.sh --dist /root/trip-dist.tar.gz \
 #             --domain trip.example.com --email you@example.com --tls --swap 2G
-#   3) 只更新后端代码：
-#        sudo bash deploy.sh --repo https://...        # 或 --src 指向新代码目录
-#   4) 只更新前端：
-#        sudo bash deploy.sh --frontend-repo https://...   # 或 --dist /root/trip-dist.tar.gz
+#   3) 只更新后端，不重新构建前端：
+#        sudo bash deploy.sh --repo https://... --no-frontend
+#   4) 只重新构建前端（代码已经在服务器上，前端改了要发版）：
+#        sudo bash deploy.sh
+#   5) 已有用户数据，迁移到新服务器（先把本地 data/ 传到服务器）：
+#        sudo bash deploy.sh --repo https://... --data /root/trip-data
 #
 set -euo pipefail
 
@@ -27,6 +32,7 @@ APP_DIR="/opt/trip-planner"
 WEB_ROOT="/var/www/trip-planner"
 RUN_USER="www-data"
 RUN_HOME="/var/lib/trip-planner"
+DATA_TARGET="${RUN_HOME}/data"
 PORT="8000"
 DOMAIN="_"
 EMAIL=""
@@ -34,11 +40,10 @@ SRC_DIR=""
 REPO_URL=""
 REPO_REF=""
 DIST_PATH=""
-FRONTEND_REPO=""
-FRONTEND_REF="main"
-FRONTEND_SUBDIR=""
+DATA_DIR=""
+FRONTEND_DIR=""
 FRONTEND_ENV=""
-WEB_SRC="/opt/trip-planner-web"
+BUILD_FRONTEND=1
 NODE_VERSION="${NODE_VERSION:-20.18.3}"
 NODE_MIRROR="${NODE_MIRROR:-https://npmmirror.com/mirrors/node}"
 NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
@@ -66,35 +71,38 @@ usage() {
   cat <<'EOF'
 trip-planner 一键部署脚本（Ubuntu 22.04/24.04、Debian 12）
 
+前端源码已并入本仓库（frontend/），默认在服务器上构建。
+
 用法：
   sudo bash deploy.sh [选项]
 
 示例：
-  # 首次部署：前后端都从 git 拉，服务器上构建前端，顺带 HTTPS + 2G swap
+  # 首次部署：拉整个仓库，服务器上构建前端，顺带 HTTPS + 2G swap
   sudo bash deploy.sh --repo https://github.com/you/trip-planner.git \
-       --frontend-repo https://github.com/you/hello-agents.git \
-       --frontend-subdir code/chapter13/helloagents-trip-planner/frontend \
        --domain trip.example.com --email you@example.com --tls --swap 2G
 
-  # 只更新后端代码
-  sudo bash deploy.sh --repo https://github.com/you/trip-planner.git
+  # 只更新后端（不重新构建前端）
+  sudo bash deploy.sh --repo https://github.com/you/trip-planner.git --no-frontend
 
-  # 只更新前端（从 git 重新拉取源码并构建）
-  sudo bash deploy.sh --frontend-repo https://github.com/you/hello-agents.git \
-       --frontend-subdir code/chapter13/helloagents-trip-planner/frontend
+  # 代码已经在服务器上，只重新构建前端
+  sudo bash deploy.sh
 
   # 前端在本地 build 后只上传产物（服务器不装 Node）
   sudo bash deploy.sh --dist /root/trip-dist.tar.gz
 
+  # 已有账号/行程数据，一起迁到服务器（先 scp data/ 到 /root/trip-data）
+  sudo bash deploy.sh --repo https://... --data /root/trip-data
+
 选项：
   --src DIR           从本地目录同步源码到 /opt/trip-planner（rsync，会删除多余文件）
-  --repo URL          后端源码 git 地址（私有库请先配好 HTTPS token 或 SSH key）
-  --ref REF           后端仓库分支/标签（默认仓库默认分支）
-  --frontend-repo URL 前端源码 git 地址；给了它就在服务器上装 Node 并构建
-  --frontend-ref REF  前端仓库分支/标签（默认 main）
-  --frontend-subdir P 前端在仓库里的相对路径（monorepo 必填，如 code/chapter13/.../frontend）
+  --repo URL          源码 git 地址（私有库请先配好 HTTPS token 或 SSH key）
+  --ref REF           仓库分支/标签（默认仓库默认分支）
+  --frontend-dir DIR  前端源码目录；默认 /opt/trip-planner/frontend（相对路径按部署目录解析）
   --frontend-env FILE 前端构建用 .env（含 VITE_AMAP_WEB_JS_KEY 等；不填则用仓库里的 .env）
-  --dist PATH         前端构建产物：dist.tar.gz / dist.tgz / dist.zip / dist 目录
+  --no-frontend       跳过前端构建（只更新后端时用）
+  --dist PATH         前端构建产物：dist.tar.gz / dist.tgz / dist.zip / dist 目录，给了它就不再构建
+  --data DIR          导入已有数据目录（app.db、.auth_secret、regions.json、province_shapes）；
+                      会先停服并备份服务器上的旧数据；全新部署不需要这个参数
   --domain NAME       站点域名；不填则用 "_"（直接 IP 访问）
   --email MAIL        certbot 证书通知邮箱（与 --tls 同时使用）
   --port N            后端监听端口（默认 8000，只监听 127.0.0.1）
@@ -113,10 +121,12 @@ while [[ $# -gt 0 ]]; do
     --repo)            REPO_URL="${2:-}";        shift 2 ;;
     --ref)             REPO_REF="${2:-}";        shift 2 ;;
     --dist)            DIST_PATH="${2:-}";       shift 2 ;;
-    --frontend-repo)   FRONTEND_REPO="${2:-}";   shift 2 ;;
-    --frontend-ref)    FRONTEND_REF="${2:-}";    shift 2 ;;
-    --frontend-subdir) FRONTEND_SUBDIR="${2:-}"; shift 2 ;;
+    --data)            DATA_DIR="${2:-}";        shift 2 ;;
+    --frontend-dir)    FRONTEND_DIR="${2:-}";    shift 2 ;;
     --frontend-env)    FRONTEND_ENV="${2:-}";    shift 2 ;;
+    --no-frontend)     BUILD_FRONTEND=0;         shift ;;
+    --frontend-repo|--frontend-ref|--frontend-subdir)
+      die "参数 $1 已废弃：前端已并入本仓库（frontend/），用 --repo 拉代码后脚本会自动构建；也可用 --dist 上传本地产物" ;;
     --domain)          DOMAIN="${2:-}";          shift 2 ;;
     --email)           EMAIL="${2:-}";           shift 2 ;;
     --port)            PORT="${2:-}";            shift 2 ;;
@@ -169,18 +179,27 @@ python3 -c 'import sys; assert sys.version_info[:2] >= (3, 10), sys.version' \
 
 install -d -m 755 "${APP_DIR}" "${WEB_ROOT}" "${RUN_HOME}"
 
+# 旧版本把前端克隆到 /opt/trip-planner-web；前端并入本仓库后这个目录没用了
+if [[ -d /opt/trip-planner-web ]]; then
+  warn "检测到旧的前端源码目录 /opt/trip-planner-web（含 node_modules 会占几百 MB），可手动删除：rm -rf /opt/trip-planner-web"
+fi
+
 # ---------------------------------------------------------------- 3. 源码
 if [[ -n "${SRC_DIR}" ]]; then
   [[ -d "${SRC_DIR}" ]] || die "--src 目录不存在：${SRC_DIR}"
   log "同步源码 ${SRC_DIR} -> ${APP_DIR}"
+  # 不同步本机密钥和构建产物：.env 由脚本按模板生成，node_modules/dist 在服务器上重建
   rsync -a --delete \
     --exclude='.git' --exclude='.venv' --exclude='__pycache__' \
     --exclude='.idea' --exclude='.workbuddy' --exclude='*.log' \
+    --exclude='.env' --exclude='.env.frontend' \
+    --exclude='frontend/node_modules' --exclude='frontend/dist' \
+    --exclude='/data' --exclude='/deploy/out' \
     "${SRC_DIR}/" "${APP_DIR}/"
 elif [[ -n "${REPO_URL}" ]]; then
   REPO_URL="$(normalize_repo_url "${REPO_URL}")"
   if [[ -d "${APP_DIR}/.git" ]]; then
-    log "更新后端仓库 ${REPO_URL}"
+    log "更新仓库 ${REPO_URL}"
     if git -C "${APP_DIR}" remote get-url origin >/dev/null 2>&1; then
       git -C "${APP_DIR}" remote set-url origin "${REPO_URL}"
     else
@@ -194,12 +213,26 @@ elif [[ -n "${REPO_URL}" ]]; then
     git -C "${APP_DIR}" reset --hard FETCH_HEAD
   else
     log "克隆 ${REPO_URL}"
+    # 如果之前是用 --src 部署的（没有 .git），这里会删掉整个目录；
+    # 先把本地密钥文件备份出来，避免重装后 .env 里的密钥被一起删掉。
+    CLONE_BAK="$(mktemp -d)"
+    for f in .env .env.frontend frontend/.env; do
+      if [[ -f "${APP_DIR}/${f}" ]]; then
+        install -D -m 600 "${APP_DIR}/${f}" "${CLONE_BAK}/${f}"
+      fi
+    done
     rm -rf "${APP_DIR:?}"
     if [[ -n "${REPO_REF}" ]]; then
       git clone --depth 1 --branch "${REPO_REF}" "${REPO_URL}" "${APP_DIR}"
     else
       git clone --depth 1 "${REPO_URL}" "${APP_DIR}"
     fi
+    for f in .env .env.frontend frontend/.env; do
+      if [[ -f "${CLONE_BAK}/${f}" ]]; then
+        install -D -m 600 "${CLONE_BAK}/${f}" "${APP_DIR}/${f}"
+      fi
+    done
+    rm -rf "${CLONE_BAK}"
   fi
 elif [[ ! -f "${APP_DIR}/requirements.txt" ]]; then
   die "没给 --src / --repo，且 ${APP_DIR} 里没有代码。请先把代码放上去或指定参数。"
@@ -250,7 +283,13 @@ rm -rf "${WARM_DIR}"
 
 # ---------------------------------------------------------------- 6. 权限与 .env
 chown -R root:"${RUN_USER}" "${APP_DIR}" "${WEB_ROOT}"
-chmod -R g+rX "${APP_DIR}"
+# frontend/node_modules 动辄几万个小文件，跳过它免得每次部署都 chmod 一遍；
+# .git 只有 root 会碰，也不用遍历
+find "${APP_DIR}" \
+  -path "${APP_DIR}/.git" -prune -o \
+  -name node_modules -prune -o \
+  -name dist -prune -o \
+  -exec chmod g+rX {} + 2>/dev/null || true
 chmod -R 755 "${WEB_ROOT}"
 
 ENV_FILE="${APP_DIR}/.env"
@@ -282,6 +321,66 @@ if [[ "${DOMAIN}" != "_" ]] && ! grep -q "${DOMAIN}" "${ENV_FILE}"; then
   warn "CORS_ORIGINS 里没有 ${DOMAIN}，同源部署不影响，但建议补上以防直连 8000"
 fi
 
+# ---------------------------------------------------------------- 6.5 用户数据
+# SQLite 库在首次启动时由 init_db() 自动建表，所以全新部署不需要 --data。
+# --data 用于把已有数据（账号、行程、足迹、家庭密钥）迁到服务器：
+# 源目录里至少要有 app.db；库里有加密过的模型/OBS Key 时，必须同时带上 .auth_secret，
+# 否则那部分密文解不开（crypto.py 用它派生加密密钥）。
+if [[ -n "${DATA_DIR}" ]]; then
+  [[ -d "${DATA_DIR}" ]] || die "--data 目录不存在：${DATA_DIR}"
+
+  # 跟随 .env 里的 DB_PATH 决定导入位置；regions.json / province_shapes
+  # 按代码约定也放在库文件同目录（见 footprint_service.py 的 _regions_path/_shape_dir）
+  DBPATH_VALUE="$(sed -n 's/^DB_PATH=//p' "${ENV_FILE}" | tail -n 1)"
+  if [[ -n "${DBPATH_VALUE}" ]]; then
+    if [[ "${DBPATH_VALUE}" = /* ]]; then
+      DB_FILE="${DBPATH_VALUE}"
+    else
+      DB_FILE="${APP_DIR}/${DBPATH_VALUE}"
+    fi
+  else
+    DB_FILE="${RUN_HOME}/data/app.db"
+  fi
+  DATA_TARGET="$(dirname "${DB_FILE}")"
+  install -d -m 750 -o "${RUN_USER}" -g "${RUN_USER}" "${DATA_TARGET}"
+
+  [[ "$(readlink -f "${DATA_DIR}")" != "$(readlink -f "${DATA_TARGET}")" ]] \
+    || die "--data 不能指向服务器正在使用的数据目录：${DATA_DIR}"
+  [[ -f "${DATA_DIR}/$(basename "${DB_FILE}")" ]] \
+    || die "--data 里找不到 $(basename "${DB_FILE}")：${DATA_DIR}"
+
+  log "停止服务，准备导入数据"
+  systemctl stop trip-planner >/dev/null 2>&1 || true
+
+  if [[ -f "${DB_FILE}" ]]; then
+    DATA_BAK="$(dirname "${DATA_TARGET}")/$(basename "${DATA_TARGET}").bak-$(date +%Y%m%d-%H%M%S)"
+    cp -a "${DATA_TARGET}" "${DATA_BAK}"
+    log "服务器上的旧数据已备份到 ${DATA_BAK}"
+  fi
+
+  # -shm 是临时索引，换机器后让 SQLite 自己重建；源库没有 -wal 时，
+  # 目标里的旧 -wal 必须先删，否则会把两个库的页混在一起。
+  rm -f "${DB_FILE}-wal" "${DB_FILE}-shm"
+  rsync -a --exclude='*-shm' "${DATA_DIR}/" "${DATA_TARGET}/"
+  chown -R "${RUN_USER}:${RUN_USER}" "${DATA_TARGET}"
+  find "${DATA_TARGET}" -type d -exec chmod 750 {} +
+  find "${DATA_TARGET}" -type f -exec chmod 640 {} +
+  chmod 600 "${DATA_TARGET}/.auth_secret" 2>/dev/null || true
+
+  AUTH_SECRET_VALUE="$(sed -n 's/^AUTH_SECRET=//p' "${ENV_FILE}" | tail -n 1)"
+  if [[ -z "${AUTH_SECRET_VALUE}" && ! -f "${DATA_DIR}/.auth_secret" ]]; then
+    warn "源目录没有 .auth_secret：若导入的库里有家庭模型/OBS 密钥，将无法解密；请把源 data/.auth_secret 一起带上"
+  fi
+
+  if ! sudo -u "${RUN_USER}" python3 -c \
+      'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("PRAGMA quick_check").fetchone()[0])' \
+      "${DB_FILE}" | grep -qx ok; then
+    warn "数据库 quick_check 未通过，请检查 ${DB_FILE}（旧数据已备份，可手动还原）"
+  else
+    log "数据库自检通过：${DB_FILE}"
+  fi
+fi
+
 # ---------------------------------------------------------------- 7. systemd
 log "安装 systemd 服务"
 sed -e "s|__APP_DIR__|${APP_DIR}|g" \
@@ -295,8 +394,20 @@ systemctl enable trip-planner >/dev/null 2>&1 || true
 systemctl restart trip-planner
 
 # ---------------------------------------------------------------- 8. 前端
-# A) --frontend-repo：从 git 拉前端源码，服务器上装 Node 构建（推荐，可一键更新）
-# B) --dist：用本地构建好的产物（服务器不装 Node，但要手动上传）
+# 前端源码就在仓库的 frontend/ 下，默认在服务器上构建。
+# 优先级：--dist 上传产物 > --no-frontend 跳过 > 构建前端。
+
+FE_DIR="${APP_DIR}/frontend"
+if [[ -n "${FRONTEND_DIR}" ]]; then
+  if [[ "${FRONTEND_DIR}" = /* ]]; then
+    FE_DIR="${FRONTEND_DIR}"
+  else
+    FE_DIR="${APP_DIR}/${FRONTEND_DIR}"
+  fi
+fi
+if [[ -n "${FRONTEND_DIR}" && ! -f "${FE_DIR}/package.json" ]]; then
+  die "--frontend-dir 指向的目录没有 package.json：${FE_DIR}"
+fi
 
 ensure_node() {
   local major=""
@@ -334,55 +445,28 @@ ensure_node() {
   log "Node $(node -v) 已安装到 /opt/node-v${NODE_VERSION}"
 }
 
-# monorepo 里自动找前端工程（含 package.json 的目录）
-FE_DIR=""
-find_frontend_dir() {
-  local root="$1"
-  if [[ -n "${FRONTEND_SUBDIR}" ]]; then
-    [[ -f "${root}/${FRONTEND_SUBDIR}/package.json" ]] \
-      || die "--frontend-subdir 里没有 package.json：${root}/${FRONTEND_SUBDIR}"
-    FE_DIR="${root}/${FRONTEND_SUBDIR}"
-    log "前端工程目录：${FE_DIR}"
-    return 0
-  fi
-  if [[ -f "${root}/package.json" ]]; then
-    FE_DIR="${root}"
-    log "前端工程目录：${FE_DIR}"
-    return 0
-  fi
-  local found=() p d preferred=""
-  while IFS= read -r p; do
-    found+=("$(dirname "${p}")")
-  done < <(find "${root}" -maxdepth 5 -name package.json \
-             -not -path "*/node_modules/*" -not -path "*/dist/*" 2>/dev/null | sort)
-  [[ ${#found[@]} -gt 0 ]] || die "仓库里找不到 package.json，请用 --frontend-subdir 指定前端目录"
-  for d in "${found[@]}"; do
-    [[ "$(basename "${d}")" == "frontend" ]] && preferred="${d}"
-  done
-  if [[ -n "${preferred}" ]]; then
-    FE_DIR="${preferred}"
-  else
-    FE_DIR="${found[0]}"
-    [[ ${#found[@]} -gt 1 ]] && warn "找到多个 package.json，默认用第一个：${FE_DIR}"
-  fi
-  log "前端工程目录：${FE_DIR}"
-}
-
 prepare_frontend_env() {
   local fe="$1"
   local target="${fe}/.env"
   if [[ -n "${FRONTEND_ENV}" ]]; then
     [[ -f "${FRONTEND_ENV}" ]] || die "--frontend-env 不存在：${FRONTEND_ENV}"
-    install -m 644 "${FRONTEND_ENV}" "${target}"
-    log "前端 .env 使用 --frontend-env 指定的文件"
+    if [[ "${FRONTEND_ENV}" -ef "${target}" ]]; then
+      log "前端 .env 就是 --frontend-env 指定的 ${target}"
+    else
+      install -m 644 "${FRONTEND_ENV}" "${target}"
+      log "前端 .env 使用 --frontend-env 指定的文件"
+    fi
   elif [[ -f "${APP_DIR}/.env.frontend" ]]; then
     install -m 644 "${APP_DIR}/.env.frontend" "${target}"
     log "前端 .env 使用 ${APP_DIR}/.env.frontend"
   elif [[ -f "${target}" ]]; then
-    log "前端 .env 使用仓库自带的 ${target}"
+    log "前端 .env 使用仓库里已有的 ${target}"
+  elif [[ -f "${fe}/.env.example" ]]; then
+    install -m 644 "${fe}/.env.example" "${target}"
+    warn "前端没有 .env，已按 .env.example 生成，VITE_AMAP_WEB_JS_KEY 需要手动填"
   else
     : > "${target}"
-    warn "仓库里没有前端 .env（有 .env.example 可参考），已生成空白模板"
+    warn "前端没有 .env（连 .env.example 也没有），已生成空白模板"
   fi
 
   # 无论如何强制同源：VITE_API_BASE_URL 必须为空，否则线上会去连用户自己的 localhost:8000
@@ -394,54 +478,28 @@ prepare_frontend_env() {
 
   if ! grep -q '^VITE_AMAP_WEB_JS_KEY=.\+' "${target}"; then
     warn "前端 .env 缺少 VITE_AMAP_WEB_JS_KEY，上线后地图会空白（不是 CORS）"
-    warn "  解法：把本地的 frontend/.env scp 上来，用 --frontend-env 指定"
+    warn "  解法：把本地的 frontend/.env scp 上来，用 --frontend-env 指定；"
+    warn "        或长期放在 ${APP_DIR}/.env.frontend（脚本会自动使用）"
   fi
 }
 
-build_frontend_git() {
-  FRONTEND_REPO="$(normalize_repo_url "${FRONTEND_REPO}")"
-  install -d -m 755 "$(dirname "${WEB_SRC}")"
-
-  if [[ -d "${WEB_SRC}/.git" ]]; then
-    log "更新前端仓库 ${FRONTEND_REPO}（${FRONTEND_REF}）"
-    if git -C "${WEB_SRC}" remote get-url origin >/dev/null 2>&1; then
-      git -C "${WEB_SRC}" remote set-url origin "${FRONTEND_REPO}"
-    else
-      git -C "${WEB_SRC}" remote add origin "${FRONTEND_REPO}"
-    fi
-    git -C "${WEB_SRC}" fetch --depth 1 origin "${FRONTEND_REF}" \
-      || die "拉取前端仓库失败（分支：${FRONTEND_REF}）"
-    git -C "${WEB_SRC}" reset --hard FETCH_HEAD >/dev/null
-    [[ -n "${FRONTEND_SUBDIR}" ]] && git -C "${WEB_SRC}" sparse-checkout set "${FRONTEND_SUBDIR}" 2>/dev/null || true
-  else
-    rm -rf "${WEB_SRC}"
-    log "克隆前端仓库 ${FRONTEND_REPO}（${FRONTEND_REF}）"
-    if [[ -n "${FRONTEND_SUBDIR}" ]] && \
-       git clone --depth 1 --filter=blob:none --sparse \
-         --branch "${FRONTEND_REF}" "${FRONTEND_REPO}" "${WEB_SRC}" 2>/dev/null; then
-      # monorepo 只检出前端目录，省流量（git < 2.25 不支持，会走下面的完整克隆）
-      git -C "${WEB_SRC}" sparse-checkout set "${FRONTEND_SUBDIR}"
-      log "已稀疏检出：只拉取 ${FRONTEND_SUBDIR}"
-    else
-      rm -rf "${WEB_SRC}"
-      git clone --depth 1 --branch "${FRONTEND_REF}" "${FRONTEND_REPO}" "${WEB_SRC}" \
-        || die "克隆前端仓库失败（检查地址/分支；私有库需要 token 或 SSH key）"
-    fi
-  fi
-
-  find_frontend_dir "${WEB_SRC}"
-  prepare_frontend_env "${FE_DIR}"
+build_frontend() {
+  local fe="$1"
   ensure_node
+  prepare_frontend_env "${fe}"
 
   log "安装前端依赖并构建（首次约 1~3 分钟）"
   (
-    cd "${FE_DIR}"
+    cd "${fe}"
     export npm_config_registry="${NPM_REGISTRY}"
     export npm_config_fund=false
     export npm_config_audit=false
     export NODE_OPTIONS="--max-old-space-size=1024"
     if [[ -f package-lock.json ]]; then
-      npm ci --prefer-offline --no-audit --no-fund
+      if ! npm ci --prefer-offline --no-audit --no-fund; then
+        warn "npm ci 失败（package-lock 可能过期），改用 npm install"
+        npm install --prefer-offline --no-audit --no-fund
+      fi
     else
       npm install --prefer-offline --no-audit --no-fund
     fi
@@ -450,26 +508,21 @@ build_frontend_git() {
     npm run build
   ) || die "前端构建失败，看上面的 npm 输出（内存不够可加 --swap 2G）"
 
-  [[ -f "${FE_DIR}/dist/index.html" ]] || die "构建完成但没有 ${FE_DIR}/dist/index.html"
+  [[ -f "${fe}/dist/index.html" ]] || die "构建完成但没有 ${fe}/dist/index.html"
 
-  log "部署产物 ${FE_DIR}/dist -> ${WEB_ROOT}"
-  rsync -a --delete "${FE_DIR}/dist/" "${WEB_ROOT}/"
+  log "部署产物 ${fe}/dist -> ${WEB_ROOT}"
+  rsync -a --delete "${fe}/dist/" "${WEB_ROOT}/"
   chown -R root:"${RUN_USER}" "${WEB_ROOT}"
   chmod -R 755 "${WEB_ROOT}"
-  chmod -R a+rX "${WEB_SRC}"
   if grep -Rqs "localhost:8000" "${WEB_ROOT}/assets" 2>/dev/null; then
     warn "产物里仍有 localhost:8000（前端把 API 地址写死了），线上会跨域"
   fi
 }
 
-if [[ -n "${FRONTEND_REPO}" ]]; then
-  if [[ -n "${DIST_PATH}" ]]; then
-    warn "同时给了 --frontend-repo 和 --dist，以 git 构建为准"
-  fi
-  build_frontend_git
-elif [[ -n "${DIST_PATH}" ]]; then
+if [[ -n "${DIST_PATH}" ]]; then
   [[ -e "${DIST_PATH}" ]] || die "--dist 不存在：${DIST_PATH}"
-  TMPD="$(mktemp -d)"
+  TMPD_ROOT="$(mktemp -d)"
+  TMPD="${TMPD_ROOT}"
   log "部署前端产物 ${DIST_PATH} -> ${WEB_ROOT}"
   case "${DIST_PATH}" in
     *.tar.gz|*.tgz) tar -xzf "${DIST_PATH}" -C "${TMPD}" ;;
@@ -483,12 +536,21 @@ elif [[ -n "${DIST_PATH}" ]]; then
   fi
   [[ -f "${TMPD}/index.html" ]] || die "产物里找不到 index.html，请检查 --dist 内容"
   rsync -a --delete "${TMPD}/" "${WEB_ROOT}/"
-  rm -rf "${TMPD}"
+  rm -rf "${TMPD_ROOT}"
   chown -R root:"${RUN_USER}" "${WEB_ROOT}"
   chmod -R 755 "${WEB_ROOT}"
+elif [[ "${BUILD_FRONTEND}" -eq 1 ]]; then
+  if [[ -f "${FE_DIR}/package.json" ]]; then
+    build_frontend "${FE_DIR}"
+  else
+    warn "没找到前端工程 ${FE_DIR}/package.json，跳过前端构建（用 --frontend-dir 指定目录）"
+    [[ -f "${WEB_ROOT}/index.html" ]] \
+      || warn "前端目录也是空的（${WEB_ROOT}），站点会 403/404"
+  fi
 else
+  log "--no-frontend：保持 ${WEB_ROOT} 现有静态文件不动"
   [[ -f "${WEB_ROOT}/index.html" ]] \
-    || warn "前端目录为空（${WEB_ROOT}），站点会 403/404，请用 --frontend-repo 或 --dist"
+    || warn "前端目录是空的（${WEB_ROOT}），站点会 403/404；去掉 --no-frontend 或加 --dist"
 fi
 
 # ---------------------------------------------------------------- 9. nginx
@@ -607,12 +669,19 @@ SCHEME="http"
 [[ "${DOMAIN}" != "_" && -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]] && SCHEME="https"
 HOST_SHOWN="${DOMAIN}"
 [[ "${HOST_SHOWN}" == "_" ]] && HOST_SHOWN="$(curl -fsS --max-time 3 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
-if [[ -n "${FRONTEND_REPO}" ]]; then
-  FE_SRC="git 构建（${FRONTEND_REPO}）"
-elif [[ -n "${DIST_PATH}" ]]; then
+if [[ -n "${DIST_PATH}" ]]; then
   FE_SRC="上传产物（${DIST_PATH}）"
+elif [[ "${BUILD_FRONTEND}" -eq 1 && -f "${FE_DIR}/package.json" ]]; then
+  FE_SRC="仓库内构建（${FE_DIR}）"
+elif [[ "${BUILD_FRONTEND}" -eq 1 ]]; then
+  FE_SRC="未找到前端工程，已跳过"
 else
-  FE_SRC="未变更"
+  FE_SRC="未变更（--no-frontend）"
+fi
+if [[ -n "${DATA_DIR}" ]]; then
+  DATA_SRC="已导入（${DATA_DIR}）"
+else
+  DATA_SRC="沿用服务器现有数据"
 fi
 echo
 log "部署完成"
@@ -621,8 +690,10 @@ cat <<EOF
     接口      : ${SCHEME}://${HOST_SHOWN}/api/...   (nginx -> 127.0.0.1:${PORT})
     API 文档  : ${SCHEME}://${HOST_SHOWN}/docs
     后端目录  : ${APP_DIR}
+    前端源码  : ${FE_DIR}
     前端目录  : ${WEB_ROOT}
     前端来源  : ${FE_SRC}
+    数据目录  : ${DATA_TARGET}（${DATA_SRC}）
     服务管理  : systemctl status|restart trip-planner
     查看日志  : journalctl -u trip-planner -f
     配置文件  : ${ENV_FILE}（改完必须 systemctl restart trip-planner）

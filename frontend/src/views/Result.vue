@@ -345,6 +345,7 @@ import AMapLoader from '@amap/amap-jsapi-loader'
 import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
 import { fetchTripById, generateTripPlan } from '@/services/api'
+import { isNativeApp, saveBlob, saveDataUrl } from '@/services/native'
 import type { TripFormData, TripPlan } from '@/types'
 
 const router = useRouter()
@@ -793,11 +794,18 @@ const exportAsImage = async () => {
     // 移除容器
     document.body.removeChild(exportContainer)
 
-    // 转换为图片并下载
-    const link = document.createElement('a')
-    link.download = `旅行计划_${tripPlan.value?.city}_${new Date().getTime()}.png`
-    link.href = canvas.toDataURL('image/png')
-    link.click()
+    // 转换为图片并下载：浏览器的 <a download> 在安卓 WebView 里不生效，
+    // 壳里改成写缓存目录再唤起系统分享面板（可存相册或直接发微信）
+    const filename = `旅行计划_${tripPlan.value?.city}_${new Date().getTime()}.png`
+    const dataUrl = canvas.toDataURL('image/png')
+    if (isNativeApp) {
+      await saveDataUrl(dataUrl, filename)
+    } else {
+      const link = document.createElement('a')
+      link.download = filename
+      link.href = dataUrl
+      link.click()
+    }
 
     message.success({ content: '图片导出成功!', key: 'export' })
   } catch (error: any) {
@@ -954,7 +962,12 @@ const exportAsPDF = async () => {
       heightLeft -= 297
     }
 
-    pdf.save(`旅行计划_${tripPlan.value?.city}_${new Date().getTime()}.pdf`)
+    const pdfName = `旅行计划_${tripPlan.value?.city}_${new Date().getTime()}.pdf`
+    if (isNativeApp) {
+      await saveBlob(pdf.output('blob'), pdfName)
+    } else {
+      pdf.save(pdfName)
+    }
 
     message.success({ content: 'PDF导出成功!', key: 'export' })
   } catch (error: any) {

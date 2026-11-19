@@ -57,3 +57,18 @@ data/
 
 # 临时文件
 .tmp/
+
+# 安卓打包工具链与缓存（体积大，且都放在仓库外）
+.android-sdk/
+.gradle-home/
+.npm-cache/
+.tools/
+.downloads/
+
+# 安卓工程本地产物
+frontend/android/.gradle/
+frontend/android/local.properties
+frontend/android/app/build/
+
+# 图标预览（tools/preview-icon.mjs 的临时产物）
+.preview/

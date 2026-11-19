@@ -6,10 +6,19 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:android": "vue-tsc && vite build --mode android",
+    "android:sync": "npm run build:android && cap sync android",
+    "android:apk": "npm run android:sync && powershell -NoProfile -ExecutionPolicy Bypass -File android/build-apk.ps1"
   },
   "dependencies": {
     "@amap/amap-jsapi-loader": "^1.0.1",
+    "@capacitor/android": "^7.6.10",
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/core": "^7.6.10",
+    "@capacitor/filesystem": "^7.1.9",
+    "@capacitor/share": "^7.0.4",
+    "@capacitor/status-bar": "^7.0.6",
     "ant-design-vue": "^4.2.6",
     "axios": "^1.7.9",
     "html2canvas": "^1.4.1",
@@ -18,8 +27,11 @@
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
+    "@capacitor/assets": "^4.0.0",
+    "@capacitor/cli": "^7.6.10",
     "@types/node": "^22.10.5",
     "@vitejs/plugin-vue": "^5.2.1",
+    "sharp": "^0.35.5",
     "typescript": "^5.7.3",
     "vite": "^6.0.7",
     "vue-tsc": "^2.2.0"

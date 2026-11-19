@@ -135,6 +135,12 @@
         <p class="back-home">
           <router-link to="/">← 先随便看看，不登录也行</router-link>
         </p>
+
+        <p v-if="!isNativeApp" class="apk-entry">
+          <a :href="APK_DOWNLOAD_URL" download>
+            📱 下载安卓 App <span class="apk-entry-meta">v{{ APK_VERSION }} · {{ APK_SIZE_MB }}MB</span>
+          </a>
+        </p>
       </section>
     </div>
   </div>
@@ -146,6 +152,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { useAuth } from '@/composables/useAuth'
 import { extractError, fetchAuthStatus } from '@/services/auth'
+import { isNativeApp } from '@/services/native'
+import { APK_DOWNLOAD_URL, APK_SIZE_MB, APK_VERSION } from '@/services/appDownload'
 
 const router = useRouter()
 const route = useRoute()
@@ -413,6 +421,37 @@ onMounted(async () => {
 
 .back-home a:hover {
   color: #1890ff;
+}
+
+.apk-entry {
+  margin: 14px 0 0;
+  font-size: 13px;
+  text-align: center;
+}
+
+.apk-entry a {
+  display: inline-block;
+  padding: 6px 14px;
+  color: #1890ff;
+  border: 1px dashed rgba(24, 144, 255, 0.45);
+  border-radius: 18px;
+  transition: all 0.18s ease;
+}
+
+.apk-entry a:hover {
+  color: #ffffff;
+  background: #1890ff;
+  border-color: #1890ff;
+}
+
+.apk-entry-meta {
+  margin-left: 4px;
+  font-size: 12px;
+  color: #98a5b3;
+}
+
+.apk-entry a:hover .apk-entry-meta {
+  color: rgba(255, 255, 255, 0.85);
 }
 
 /* ===== 移动端：品牌区收起成一条细横栏 ===== */

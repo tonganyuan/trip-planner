@@ -3,7 +3,7 @@
     <a-layout class="app-layout">
       <a-layout-header class="app-header">
         <div class="app-brand" @click="goHome">
-          <span class="brand-icon">🌍</span>
+          <img class="brand-icon" :src="logoUrl" alt="" />
           <span class="brand-text">胖子的智能旅行助手</span>
         </div>
 
@@ -38,7 +38,10 @@
       </a-layout-content>
 
       <a-layout-footer class="app-footer">
-        胖子的智能旅行助手 ©2025 基于HelloAgents框架
+        <span class="footer-text">胖子的智能旅行助手 ©2025 基于HelloAgents框架</span>
+        <a v-if="!isNativeApp" class="footer-apk" :href="APK_DOWNLOAD_URL" download>
+          📱 安卓 App 下载
+        </a>
       </a-layout-footer>
     </a-layout>
   </div>
@@ -49,6 +52,9 @@ import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { useAuth } from '@/composables/useAuth'
+import { APK_DOWNLOAD_URL } from '@/services/appDownload'
+import logoUrl from '@/assets/logo.png'
+import { isNativeApp } from '@/services/native'
 
 const router = useRouter()
 const { isLoggedIn, displayName, logout, ensureUser } = useAuth()
@@ -140,6 +146,13 @@ onMounted(() => {
   cursor: pointer;
 }
 
+.brand-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
 /* 长标题在窄屏下省略,不换行、不撑破头部 */
 .brand-text {
   overflow: hidden;
@@ -210,6 +223,19 @@ onMounted(() => {
   text-align: center;
 }
 
+/* 页脚顺带挂一个安装包入口，省得用户还要去找下载页 */
+.footer-apk {
+  margin-left: 14px;
+  padding-left: 14px;
+  font-size: 13px;
+  color: #1890ff;
+  border-left: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.footer-apk:hover {
+  color: #40a9ff;
+}
+
 /* ===== 移动端 ===== */
 @media (max-width: 768px) {
   .app-header {
@@ -224,7 +250,8 @@ onMounted(() => {
   }
 
   .brand-icon {
-    font-size: 18px;
+    width: 24px;
+    height: 24px;
   }
 
   /* 窄屏放不下长昵称，只留头像和下拉箭头 */
@@ -246,6 +273,14 @@ onMounted(() => {
     padding: 14px 12px;
     font-size: 12px;
     line-height: 1.6;
+  }
+
+  /* 窄屏改上下两行，避免竖线把一行文字挤断 */
+  .footer-apk {
+    display: block;
+    margin: 4px 0 0;
+    padding: 0;
+    border-left: none;
   }
 }
 </style>

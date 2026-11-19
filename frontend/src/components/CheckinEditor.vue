@@ -38,6 +38,7 @@
           show-time
           format="YYYY-MM-DD HH:mm"
           value-format="YYYY-MM-DD HH:mm"
+          input-read-only
           placeholder="打卡时间"
         />
         <a-button type="text" size="small" danger @click="remove(index)">删除</a-button>

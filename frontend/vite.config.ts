@@ -3,12 +3,17 @@ import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [vue()],
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src')
     }
+  },
+  build: {
+    // 安卓壳（--mode android）里用不到 public/ 下的静态资源：
+    // 那张 APK 本身就是 5MB，复制进 assets 只会让安装包白白翻一倍
+    copyPublicDir: mode !== 'android'
   },
   server: {
     port: 5173,
@@ -25,5 +30,4 @@ export default defineConfig({
       }
     }
   }
-})
-
+}))

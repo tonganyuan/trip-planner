@@ -69,3 +69,23 @@ svg {
     top: 64px !important;
   }
 }
+
+/* ===== 安卓壳(由 services/native.ts 给 <html> 加 .native-shell) ===== */
+
+html.native-shell,
+html.native-shell body {
+  /* App 里不要整页回弹,那会让人以为是网页 */
+  overscroll-behavior: none;
+  background: #f5f7fa;
+}
+
+/* 页脚在 App 里没有意义,把它省掉 */
+html.native-shell .app-footer {
+  display: none;
+}
+
+/* 全面屏手势条会压住底部按钮,统一留出底部安全区 */
+html.native-shell .app-content {
+  padding-bottom: calc(0px + env(safe-area-inset-bottom));
+}
+

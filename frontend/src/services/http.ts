@@ -7,7 +7,9 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 120000 // 2分钟超时
+  // 生成行程是同步阻塞的,后端实测 1~2 分钟;nginx 侧 proxy_read_timeout 是 300s,
+  // 这里给到同样的上限,避免手机网络慢一点就先超时
+  timeout: 300000
   // 注意：这里不要写死 Content-Type: application/json。
   // axios 1.x 的 transformRequest 看到 JSON 头就会把 FormData 序列化成 JSON，
   // 上传图片时后端收到的 body 变成 {"file":{}}，直接 422 Field required。

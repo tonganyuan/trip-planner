@@ -76,6 +76,7 @@
                   style="width: 100%"
                   size="large"
                   class="custom-input"
+                  input-read-only
                   placeholder="选择日期"
                 />
               </a-form-item>
@@ -90,6 +91,7 @@
                   style="width: 100%"
                   size="large"
                   class="custom-input"
+                  input-read-only
                   placeholder="选择日期"
                 />
               </a-form-item>

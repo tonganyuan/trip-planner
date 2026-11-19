@@ -249,12 +249,14 @@
           <a-date-picker
             v-model:value="formStart"
             value-format="YYYY-MM-DD"
+            input-read-only
             placeholder="到达日期"
           />
           <span class="date-dash">至</span>
           <a-date-picker
             v-model:value="formEnd"
             value-format="YYYY-MM-DD"
+            input-read-only
             placeholder="离开（可空）"
           />
         </div>
@@ -299,9 +301,9 @@
       <div class="form-row">
         <label class="form-label">什么时候</label>
         <div class="date-row">
-          <a-date-picker v-model:value="editStart" value-format="YYYY-MM-DD" placeholder="到达日期" />
+          <a-date-picker v-model:value="editStart" value-format="YYYY-MM-DD" input-read-only placeholder="到达日期" />
           <span class="date-dash">至</span>
-          <a-date-picker v-model:value="editEnd" value-format="YYYY-MM-DD" placeholder="离开（可空）" />
+          <a-date-picker v-model:value="editEnd" value-format="YYYY-MM-DD" input-read-only placeholder="离开（可空）" />
         </div>
       </div>
       <div class="form-row">
@@ -367,6 +369,7 @@ import {
 } from '@/services/footprint'
 import { useAuth } from '@/composables/useAuth'
 import { fetchOssConfig } from '@/services/oss'
+import { isNativeApp, saveDataUrl } from '@/services/native'
 import CheckinEditor from '@/components/CheckinEditor.vue'
 import type {
   CheckinDraft,
@@ -1359,7 +1362,7 @@ watch(yearList, (list) => {
 })
 
 /* ============ 长图 ============ */
-function exportPoster(): void {
+async function exportPoster(): Promise<void> {
   const s = stats.value
   if (!s.city_count) {
     message.info('先记录一次足迹，再来生成长图')
@@ -1467,16 +1470,18 @@ function exportPoster(): void {
   ctx.fillText('胖子的智能旅行助手 · 足迹地图', pad, H - 46)
 
   const filename = `足迹_${who}_${new Date().toISOString().slice(0, 10)}.png`
-  canvas.toBlob((blob) => {
-    if (!blob) return
-    const url = URL.createObjectURL(blob)
+  const dataUrl = canvas.toDataURL('image/png')
+  if (isNativeApp) {
+    // 安卓 WebView 不支持 <a download>，走系统分享面板保存到相册/发微信
+    await saveDataUrl(dataUrl, filename)
+    message.success('长图已生成，可在分享面板里保存或发送')
+  } else {
     const a = document.createElement('a')
-    a.href = url
+    a.href = dataUrl
     a.download = filename
     a.click()
-    URL.revokeObjectURL(url)
     message.success('长图已保存，可以直接分享')
-  }, 'image/png')
+  }
 }
 
 /* ============ 生命周期 ============ */
